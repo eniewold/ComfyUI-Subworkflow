@@ -5,6 +5,7 @@ Supports both UI format (saved normally via Ctrl+S) and API format.
 import json
 import logging
 import os
+import random
 import re
 from comfy_execution.graph_utils import GraphBuilder
 
@@ -140,50 +141,172 @@ def _parse_link(lnk) -> tuple[str, str, int, str, int]:
     return (str(lnk[0]), str(lnk[1]), int(lnk[2]), str(lnk[3]), int(lnk[4]))
 
 
-def _get_widget_values(class_type: str, linked_names: set, widgets_values: list) -> dict:
-    """
-    Return {widget_name: value} by aligning widgets_values with the full ordered
-    widget list for the node class (including linked inputs and hidden widgets).
-
-    widgets_values (from the UI-format JSON) stores ALL widget values in UI order,
-    even for inputs that are wired as links.  ComfyUI also inserts a hidden
-    'control_after_generate' widget after every INT input named 'seed'.
-    We must account for both when computing positional offsets.
-    """
+def _iter_widget_specs(class_type: str, linked_names: set):
     import nodes as _comfy_nodes
     cls = _comfy_nodes.NODE_CLASS_MAPPINGS.get(class_type)
     if cls is None:
-        return {}
+        return
     try:
         input_types = cls.INPUT_TYPES()
     except Exception:
-        return {}
+        return
 
-    # Build the full ordered widget list exactly as ComfyUI saves it,
-    # including linked inputs (for positional tracking) and hidden widgets.
-    full_order: list[tuple[str, bool]] = []  # (name, should_skip)
+    widget_index = 0
     for category in ("required", "optional"):
         for name, type_def in input_types.get(category, {}).items():
             if not isinstance(type_def, (list, tuple)):
                 continue
             input_type = type_def[0]
-            opts = type_def[1] if len(type_def) > 1 else {}
-            if isinstance(opts, dict) and opts.get("forceInput"):
+            opts = type_def[1] if len(type_def) > 1 and isinstance(type_def[1], dict) else {}
+            if opts.get("forceInput"):
                 continue
-            if isinstance(input_type, list) or input_type in ("INT", "FLOAT", "STRING", "BOOLEAN"):
-                skip = name in linked_names
-                full_order.append((name, skip))
-                # ComfyUI inserts control_after_generate after seed INT inputs
-                if input_type == "INT" and name == "seed":
-                    full_order.append(("control_after_generate", True))
+            if not (isinstance(input_type, list) or input_type in ("INT", "FLOAT", "STRING", "BOOLEAN")):
+                continue
 
+            skip = name in linked_names
+            control_index = None
+            if opts.get("control_after_generate"):
+                control_index = widget_index + 1
+            yield {
+                "name": name,
+                "input_type": input_type,
+                "opts": opts,
+                "index": widget_index,
+                "skip": skip,
+                "control_index": control_index,
+            }
+            widget_index += 2 if control_index is not None else 1
+
+
+def _get_widget_values(class_type: str, linked_names: set, widgets_values: list) -> dict:
+    """
+    Return {widget_name: value} by aligning widgets_values with the full ordered
+    widget list for the node class, including hidden control-after-generate
+    widgets that ComfyUI stores next to controlled numeric widgets.
+    """
     result = {}
-    for i, (name, skip) in enumerate(full_order):
-        if i >= len(widgets_values):
+    for spec in _iter_widget_specs(class_type, linked_names):
+        index = spec["index"]
+        if index >= len(widgets_values):
             break
-        if not skip:
-            result[name] = widgets_values[i]
+        if not spec["skip"]:
+            result[spec["name"]] = widgets_values[index]
     return result
+
+
+def _next_controlled_value(value, input_type: str, opts: dict, mode: str):
+    mode = str(mode).lower()
+    if mode in ("fixed", "none", ""):
+        return value
+
+    min_value = opts.get("min", 0)
+    max_value = opts.get("max", 0xffffffffffffffff if input_type == "INT" else 1.0)
+    step = opts.get("step", 1)
+
+    if input_type == "INT":
+        min_value = int(min_value)
+        max_value = int(max_value)
+        step = int(step) if step else 1
+        value = int(value)
+        if mode == "increment":
+            return min_value if value + step > max_value else value + step
+        if mode == "decrement":
+            return max_value if value - step < min_value else value - step
+        if mode == "randomize":
+            return random.randint(min_value, max_value)
+    elif input_type == "FLOAT":
+        min_value = float(min_value)
+        max_value = float(max_value)
+        step = float(step) if step else 1.0
+        value = float(value)
+        if mode == "increment":
+            return min_value if value + step > max_value else value + step
+        if mode == "decrement":
+            return max_value if value - step < min_value else value - step
+        if mode == "randomize":
+            return random.uniform(min_value, max_value)
+
+    return value
+
+
+def _apply_control_after_generate_to_nodes(nodes_list: list, location: str) -> tuple[int, int]:
+    candidates = 0
+    changed = 0
+    for node in nodes_list:
+        class_type = _node_class_type(node)
+        widgets_values = node.get("widgets_values")
+        if not class_type or not isinstance(widgets_values, list):
+            continue
+
+        linked_names = {
+            inp.get("name")
+            for inp in (node.get("inputs") or [])
+            if inp.get("name") and inp.get("link") is not None
+        }
+        for spec in _iter_widget_specs(class_type, linked_names):
+            value_index = spec["index"]
+            control_index = spec["control_index"]
+            if control_index is None or control_index >= len(widgets_values):
+                continue
+            if value_index >= len(widgets_values):
+                continue
+
+            candidates += 1
+            old_value = widgets_values[value_index]
+            mode = widgets_values[control_index]
+            try:
+                new_value = _next_controlled_value(old_value, spec["input_type"], spec["opts"], mode)
+            except (TypeError, ValueError) as e:
+                log.warning(
+                    "Subworkflow: control-after-generate skipped %s node %s %s value=%r mode=%r: %s",
+                    location,
+                    node.get("id"),
+                    spec["name"],
+                    old_value,
+                    mode,
+                    e,
+                )
+                continue
+            if new_value == old_value:
+                continue
+            widgets_values[value_index] = new_value
+            changed += 1
+            log.info(
+                "Subworkflow: control-after-generate updated %s node %s %s from %r to %r (%s)",
+                location,
+                node.get("id"),
+                spec["name"],
+                old_value,
+                new_value,
+                mode,
+            )
+
+    return candidates, changed
+
+
+def apply_control_after_generate(data: dict) -> int:
+    """
+    Mutate cached UI-format workflow widget values the same way ComfyUI's
+    frontend advances control-after-generate widgets between queued runs.
+    """
+    if not is_ui_format(data):
+        return 0
+
+    candidates, changed = _apply_control_after_generate_to_nodes(data.get("nodes", []), "workflow")
+
+    for subgraph in ((data.get("definitions") or {}).get("subgraphs") or []):
+        if not isinstance(subgraph, dict):
+            continue
+        sg_candidates, sg_changed = _apply_control_after_generate_to_nodes(
+            subgraph.get("nodes") or [],
+            f"subgraph {subgraph.get('id')}",
+        )
+        candidates += sg_candidates
+        changed += sg_changed
+
+    if changed:
+        log.info("Subworkflow: updated %d cached control-after-generate widget(s)", changed)
+    return changed
 
 
 # ---------------------------------------------------------------------------
