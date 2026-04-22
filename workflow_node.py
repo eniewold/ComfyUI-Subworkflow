@@ -4,30 +4,20 @@ Subworkflow Input / Subworkflow Output nodes, and executes it as a subgraph expa
 """
 import logging
 
+from comfy_api.latest import io
+
 from .workflow_utils import (
     list_workflow_files,
     load_workflow,
-    get_workflow_io,
     build_expansion,
     apply_control_after_generate,
     MAX_SLOTS,
-    PLACEHOLDER,
 )
 
 log = logging.getLogger("ComfyUI-Subworkflow")
 
-# A string subclass whose __ne__ always returns False so that ComfyUI's
-# type-matching considers it equal to any other type string.
-class _AnyType(str):
-    def __eq__(self, _):
-        return True
-    def __ne__(self, _):
-        return False
 
-_ANY = _AnyType("*")
-
-
-class Subworkflow:
+class Subworkflow(io.ComfyNode):
     """
     Selects a saved API-format workflow, exposes its Subworkflow Input nodes as
     inputs and its Subworkflow Output nodes as outputs, then executes the inner
@@ -35,31 +25,49 @@ class Subworkflow:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        workflows = list_workflow_files()
-        return {
-            "required": {
-                "workflow": (workflows, {}),
-                "reload_each_execution": (
-                    "BOOLEAN",
-                    {"default": True, "label_on": "reload", "label_off": "keep loaded"},
+    def define_schema(cls):
+        return io.Schema(
+            node_id="SWF_Subworkflow",
+            display_name="Subworkflow",
+            category="subworkflow",
+            description=(
+                "Executes a selected workflow as an expandable subworkflow, "
+                "using Subworkflow Input and Subworkflow Output boundary nodes."
+            ),
+            inputs=[
+                io.Combo.Input("workflow", options=list_workflow_files()),
+                io.Boolean.Input(
+                    "reload_each_execution",
+                    default=True,
+                    label_on="reload",
+                    label_off="keep loaded",
                 ),
-            },
-        }
-
-    # Fixed upper bound; the JS extension hides the unused tail slots.
-    RETURN_TYPES = (_ANY,) * MAX_SLOTS
-    RETURN_NAMES = tuple(f"out_{i}" for i in range(MAX_SLOTS))
-    FUNCTION = "execute"
-    CATEGORY = "subworkflow"
+            ],
+            outputs=[
+                io.AnyType.Output(id=f"out_{i}", display_name=f"out_{i}")
+                for i in range(MAX_SLOTS)
+            ],
+            enable_expand=True,
+            accept_all_inputs=True,
+        )
 
     @classmethod
-    def VALIDATE_INPUTS(cls, input_types=None, **kwargs):
+    def validate_inputs(cls, **kwargs):
         # Accept any incoming types for dynamic swf_in_* inputs.
         return True
 
     @classmethod
-    def IS_CHANGED(cls, workflow: str, reload_each_execution=True, **kwargs):
+    def check_lazy_status(cls, **kwargs):
+        missing_inputs = [
+            name for name, value in kwargs.items()
+            if name.startswith("swf_in_") and value is None
+        ]
+        if missing_inputs:
+            log.info("Subworkflow: waiting for dynamic input(s) %s", missing_inputs)
+        return missing_inputs
+
+    @classmethod
+    def fingerprint_inputs(cls, workflow: str, reload_each_execution=True, **kwargs):
         # The inner workflow can change between runs by file reload or by cached
         # control-after-generate mutations, even when outer inputs are unchanged.
         return float("NaN")
@@ -81,9 +89,10 @@ class Subworkflow:
         if not workflow or workflow.startswith("["):
             raise ValueError("No workflow selected. Choose a workflow file from the dropdown.")
         log.info(
-            "Subworkflow: executing inner workflow %r (reload_each_execution=%s)",
+            "Subworkflow: executing inner workflow %r (reload_each_execution=%s, dynamic_inputs=%s)",
             workflow,
             reload_each_execution,
+            sorted(k for k in kwargs if k.startswith("swf_in_")),
         )
         try:
             data = cls._get_workflow_data(workflow, reload_each_execution)
@@ -97,4 +106,4 @@ class Subworkflow:
         while len(output_refs) < MAX_SLOTS:
             output_refs.append(None)
 
-        return {"result": tuple(output_refs), "expand": graph.finalize()}
+        return io.NodeOutput(*output_refs, expand=graph.finalize())

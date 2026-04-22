@@ -468,8 +468,23 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     fi_node_ids  = {inp["node_id"] for inp in inputs_info}
     fo_node_ids  = {out["node_id"] for out in outputs_info}
     func_node_ids = fi_node_ids | fo_node_ids
+    fo_src = {out["node_id"]: dst_to_src.get(out["node_id"]) for out in outputs_info}
 
     fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
+    missing = [
+        f"swf_in_{i}:{inp['slot_name']}({inp['node_id']})"
+        for i, inp in enumerate(inputs_info)
+        if outer_inputs.get(f"swf_in_{i}") is None
+    ]
+    if missing:
+        log.warning("Subworkflow: missing UI inner input value(s): %s", missing)
+    log.info(
+        "Subworkflow: building UI expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
+        len(inputs_info),
+        len(outputs_info),
+        len(nodes_list),
+        sorted(k for k in outer_inputs if k.startswith("swf_in_")),
+    )
 
     graph = GraphBuilder()
     node_refs: dict = {}
@@ -478,6 +493,9 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     def resolve_link(src_node_id: str, src_slot: int):
         if src_node_id in fi_value:
             return fi_value[src_node_id]
+        if src_node_id in fo_src:
+            src = fo_src[src_node_id]
+            return resolve_link(src[0], src[1]) if src else None
         if src_node_id in subgraph_outputs:
             refs = subgraph_outputs[src_node_id]
             return refs[src_slot] if src_slot < len(refs) else None
@@ -571,7 +589,25 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
     inputs_info, outputs_info = _get_workflow_io_api(data)
 
     fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
+    missing = [
+        f"swf_in_{i}:{inp['slot_name']}({inp['node_id']})"
+        for i, inp in enumerate(inputs_info)
+        if outer_inputs.get(f"swf_in_{i}") is None
+    ]
+    if missing:
+        log.warning("Subworkflow: missing API inner input value(s): %s", missing)
+    log.info(
+        "Subworkflow: building API expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
+        len(inputs_info),
+        len(outputs_info),
+        len([nid for nid in data if not str(nid).startswith("_")]),
+        sorted(k for k in outer_inputs if k.startswith("swf_in_")),
+    )
     func_node_ids = {inp["node_id"] for inp in inputs_info} | {out["node_id"] for out in outputs_info}
+    fo_src = {
+        out["node_id"]: data[out["node_id"]].get("inputs", {}).get("value")
+        for out in outputs_info
+    }
 
     graph = GraphBuilder()
     node_refs: dict = {}
@@ -581,6 +617,9 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
         src_slot = int(link_val[1])
         if src_id in fi_value:
             return fi_value[src_id]
+        if src_id in fo_src:
+            src = fo_src[src_id]
+            return resolve_link(src) if isinstance(src, list) and len(src) == 2 else src
         ref = node_refs.get(src_id)
         if ref is None:
             log.warning("SWF api: node %s slot %d unresolvable", src_id, src_slot)
