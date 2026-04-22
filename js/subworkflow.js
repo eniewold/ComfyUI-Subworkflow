@@ -32,6 +32,19 @@ function swfSlotType(info) {
     return info?.type || "*";
 }
 
+function cloneSize(size) {
+    return Array.isArray(size) && size.length >= 2 ? [size[0], size[1]] : null;
+}
+
+function setNodeSizeAtLeast(node, minSize) {
+    const current = cloneSize(node.size);
+    if (!current || !minSize) return;
+    node.setSize([
+        Math.max(current[0], minSize[0]),
+        Math.max(current[1], minSize[1]),
+    ]);
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -145,7 +158,7 @@ function applyWorkflowInfo(node, info) {
     });
     updateInputSlots(node, inputs);
     updateOutputSlots(node, outputs);
-    node.setSize(node.computeSize());
+    setNodeSizeAtLeast(node, node.computeSize());
     app.graph.setDirtyCanvas(true, true);
 }
 
@@ -156,7 +169,7 @@ function applyWorkflowInfo(node, info) {
  * For outputs: updateOutputSlots splices the array directly, preserving any
  *   already-restored links on out_0 while removing the Python-padded extras.
  */
-function applyWorkflowInfoOnLoad(node, info, savedInputCount) {
+function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
     if (!info) {
         console.warn(LOG, "applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
         return;
@@ -187,7 +200,12 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount) {
     // Outputs — splice excess slots directly (avoids removeOutput callback).
     updateOutputSlots(node, outputs);
 
-    node.setSize(node.computeSize());
+    if (savedSize) {
+        console.log(LOG, "applyWorkflowInfoOnLoad: restoring saved node size", savedSize);
+        node.setSize(savedSize);
+    } else {
+        setNodeSizeAtLeast(node, node.computeSize());
+    }
     app.graph.setDirtyCanvas(true, true);
 }
 
@@ -211,6 +229,7 @@ app.registerExtension({
             // Read saved dynamic input count BEFORE origOnConfigure may change things.
             const savedInputCount = (serializedNode.inputs || [])
                 .filter(i => i.name?.startsWith("swf_in_")).length;
+            const savedSize = cloneSize(serializedNode.size);
             console.log(LOG, `onConfigure: serialized node has ${savedInputCount} dynamic input(s)`);
 
             if (origOnConfigure) origOnConfigure.call(this, serializedNode);
@@ -226,7 +245,7 @@ app.registerExtension({
 
             if (workflowName) {
                 fetchWorkflowInfo(workflowName).then(info => {
-                    applyWorkflowInfoOnLoad(this, info, savedInputCount);
+                    applyWorkflowInfoOnLoad(this, info, savedInputCount, savedSize);
                 });
             } else {
                 console.warn(LOG, "onConfigure: workflow widget not found or empty", { nodeId: this.id });

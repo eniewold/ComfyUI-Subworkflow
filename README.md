@@ -78,20 +78,26 @@ Use `at execution` set to `reload` when the inner workflow file should be read f
 - Keep experimental graph sections isolated while exposing only the inputs and outputs that matter.
 - Share common workflow pieces without copying all nodes into every workflow.
 
+## Notes
+
+- The `Subworkflow` node sets the input and output parameters when loading the inner workflow. This load is executed when the outer workflow is loaded. When linked nodes do not match the expected input types provided by `Subworkflow Output` and `Subworkflow Input` from inner workflow, the links are severed silently. 
+- The `Subworkflow Output` node will not pass through values to it's output when it's used as inner workflow. When the workflow is executed standalone, it will pass through values transparently as expected. 
+- The `Subworkflow Input` will ignore any linked nodes to the input values when used as inner workflow. When the workflow is executed standalone, it will use the linked values transparently as expected.
+
 ## Known Issues
 
 - [ ] The `Subworkflow` node progress can exceed 100%, sometimes reaching about 200%. Check with the upscale workflow example.
 - [ ] When no node is attached to an output of `Subworkflow`, an error occurs; it could be treated as an optional output.
 - [ ] Used paths with macro elements are not formatted currectly when used in inner workflow? (use Video Combine node with %date:yyyy-MM-dd%/WAN/Video)
-- [ ] Nodes linked to Subworkflow Output are not called when the inner workflow is executed as part of a larger workflow. Check if this is expected behaviour.
-- [ ] When linked nodes have a mismatch in expected input type and the value provided by Subworkflow Output, no error is given but passed to the next node. Implement type checking and error handling?
 - [ ] Green progress borders appear on more than one node when executing a inner workflow as part of a larger workflow. These borders should be limited to the currently executing node(s) outer workflow.
+- [ ] The order if inputs/outputs on the `Subworkflow` node is undetermined (probably based on the order of nodes in the inner workflow JSON). Consider adding an option to control this order.
 
-Fixed:
+### Recently fixed
 - [x] `Subworkflow Output` can be placed between two nodes and still behave as a passthrough.
 - [x] `Subworkflow Input` transparency for nodes is handled for tested pass-through cases such as concatenate string.
 - [x] Inner workflow nodes with randomize-after-processing preserve updated values when `at execution` is set to `keep loaded`.
 - [x] `Subworkflow`, `Subworkflow Input`, and `Subworkflow Output` are all V3 nodes.
+- [x] When linked nodes have a mismatch in expected input type and the value provided by Subworkflow Output, no error is given but passed to the next node. Implement type checking and error handling?
 
-## Wish List
+### Wish List
 - [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. 
