@@ -38,6 +38,7 @@ class Subworkflow(io.ComfyNode):
                 io.Combo.Input("workflow", options=list_workflow_files()),
                 io.Boolean.Input(
                     "reload_each_execution",
+                    display_name="at execution",
                     default=True,
                     label_on="reload",
                     label_off="keep loaded",
@@ -86,7 +87,7 @@ class Subworkflow(io.ComfyNode):
 
     @classmethod
     def execute(cls, workflow: str, reload_each_execution=True, **kwargs):
-        if not workflow or workflow.startswith("["):
+        if not workflow:
             raise ValueError("No workflow selected. Choose a workflow file from the dropdown.")
         log.info(
             "Subworkflow: executing inner workflow %r (reload_each_execution=%s, dynamic_inputs=%s)",

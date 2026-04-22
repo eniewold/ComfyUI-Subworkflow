@@ -22,8 +22,8 @@ const LOG = "[SWF]";
 // ---------------------------------------------------------------------------
 
 async function fetchWorkflowInfo(workflowName) {
-    if (!workflowName || workflowName.startsWith("[")) {
-        console.log(LOG, "fetchWorkflowInfo: skipping placeholder value", workflowName);
+    if (!workflowName) {
+        console.log(LOG, "fetchWorkflowInfo: skipping empty workflow value");
         return null;
     }
     console.log(LOG, "fetchWorkflowInfo: fetching info for", workflowName);
@@ -175,7 +175,7 @@ app.registerExtension({
             const workflowName = widget?.value;
             console.log(LOG, "onConfigure: workflow widget value =", workflowName);
 
-            if (workflowName && !workflowName.startsWith("[")) {
+            if (workflowName) {
                 fetchWorkflowInfo(workflowName).then(info => {
                     applyWorkflowInfoOnLoad(this, info, savedInputCount);
                 });
@@ -199,8 +199,7 @@ app.registerExtension({
             const widget = this.widgets?.find(w => w.name === "workflow");
             const val = widget?.value;
             console.log(LOG, "onAdded: node placed on canvas, workflow =", val);
-            // Placeholder values (start with "[") mean no workflow selected yet.
-            if (val && !val.startsWith("[")) {
+            if (val) {
                 fetchWorkflowInfo(val).then(info => applyWorkflowInfo(this, info));
             }
         };

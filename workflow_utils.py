@@ -18,7 +18,7 @@ _UUID_RE = re.compile(
 SWF_SUBWORKFLOW_INPUT = "SWF_SubworkflowInput"
 SWF_SUBWORKFLOW_OUTPUT = "SWF_SubworkflowOutput"
 MAX_SLOTS = 8
-PLACEHOLDER = "[select workflow]"
+PLACEHOLDER = ""
 
 
 def _workflows_dir() -> str:
