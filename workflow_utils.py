@@ -35,13 +35,23 @@ def list_workflow_files() -> list[str]:
                 if f.endswith(".json"):
                     rel = os.path.relpath(os.path.join(root, f), d)
                     files.append(rel.replace(os.sep, "/"))
-    return [PLACEHOLDER] + sorted(files)
+    result = [PLACEHOLDER] + sorted(files)
+    log.info("Subworkflow: discovered %d workflow file(s) in %s", len(files), d)
+    return result
 
 
 def load_workflow(filename: str) -> dict:
     path = os.path.join(_workflows_dir(), filename)
+    log.info("Subworkflow: loading workflow file %r from %s", filename, path)
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    log.info(
+        "Subworkflow: loaded workflow file %r format=%s top_level_keys=%s",
+        filename,
+        "UI" if is_ui_format(data) else "API",
+        sorted(data.keys())[:12],
+    )
+    return data
 
 
 def is_ui_format(data: dict) -> bool:
@@ -65,8 +75,12 @@ def get_workflow_io(data: dict) -> tuple[list[dict], list[dict]]:
     Each entry: {"node_id": str, "slot_name": str}
     """
     if is_ui_format(data):
-        return _get_workflow_io_ui(data)
-    return _get_workflow_io_api(data)
+        inputs, outputs = _get_workflow_io_ui(data)
+        log.info("Subworkflow: UI workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
+        return inputs, outputs
+    inputs, outputs = _get_workflow_io_api(data)
+    log.info("Subworkflow: API workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
+    return inputs, outputs
 
 
 def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
@@ -74,15 +88,26 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
     for node in data.get("nodes", []):
         ntype = _node_class_type(node)
         nid = str(node.get("id"))
-        widgets = node.get("widgets_values") or []
-        slot_name = widgets[0] if widgets else nid
         if ntype == SWF_SUBWORKFLOW_INPUT:
+            slot_name = _boundary_slot_name(node, nid)
+            log.info("Subworkflow: found UI input boundary node=%s slot=%r", nid, slot_name)
             inputs.append({"node_id": nid, "slot_name": slot_name})
         elif ntype == SWF_SUBWORKFLOW_OUTPUT:
+            slot_name = _boundary_slot_name(node, nid)
+            log.info("Subworkflow: found UI output boundary node=%s slot=%r", nid, slot_name)
             outputs.append({"node_id": nid, "slot_name": slot_name})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
     return inputs, outputs
+
+
+def _boundary_slot_name(node: dict, fallback: str) -> str:
+    widgets = node.get("widgets_values") or []
+    if isinstance(widgets, list) and widgets:
+        return widgets[0]
+    if isinstance(widgets, dict):
+        return widgets.get("slot_name") or widgets.get("value") or fallback
+    return fallback
 
 
 def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
@@ -93,8 +118,10 @@ def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
         ct = node.get("class_type", "")
         slot = node.get("inputs", {}).get("slot_name", nid)
         if ct == SWF_SUBWORKFLOW_INPUT:
+            log.info("Subworkflow: found API input boundary node=%s slot=%r", nid, slot)
             inputs.append({"node_id": nid, "slot_name": slot})
         elif ct == SWF_SUBWORKFLOW_OUTPUT:
+            log.info("Subworkflow: found API output boundary node=%s slot=%r", nid, slot)
             outputs.append({"node_id": nid, "slot_name": slot})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
@@ -141,6 +168,65 @@ def _parse_link(lnk) -> tuple[str, str, int, str, int]:
     return (str(lnk[0]), str(lnk[1]), int(lnk[2]), str(lnk[3]), int(lnk[4]))
 
 
+def _is_bypassed_node(node: dict) -> bool:
+    return node.get("mode") == 4
+
+
+def _build_bypass_sources(nodes_list: list[dict], link_map: dict) -> dict[str, dict[int, tuple[str, int]]]:
+    """
+    Return {bypassed_node_id: {output_slot: (source_node_id, source_slot)}}.
+
+    ComfyUI UI-format workflows keep bypassed nodes in the saved graph with
+    mode=4, but normal prompt conversion rewires around them.  GraphBuilder
+    expansion needs to perform the same rewrite explicitly.
+    """
+    bypass_sources: dict[str, dict[int, tuple[str, int]]] = {}
+    for node in nodes_list:
+        if not _is_bypassed_node(node):
+            continue
+
+        node_id = str(node.get("id"))
+        inputs = node.get("inputs") or []
+        outputs = node.get("outputs") or []
+        linked_inputs = []
+        for index, inp in enumerate(inputs):
+            link_id = inp.get("link")
+            if link_id is None:
+                continue
+            src = link_map.get(str(link_id))
+            if src is not None:
+                linked_inputs.append((index, inp.get("type"), src))
+
+        output_sources: dict[int, tuple[str, int]] = {}
+        for output_index, out in enumerate(outputs):
+            output_type = out.get("type")
+            selected = None
+
+            for input_index, _, src in linked_inputs:
+                if input_index == output_index:
+                    selected = src
+                    break
+            if selected is None:
+                for _, input_type, src in linked_inputs:
+                    if input_type == output_type:
+                        selected = src
+                        break
+            if selected is None and linked_inputs:
+                selected = linked_inputs[0][2]
+
+            if selected is not None:
+                output_sources[output_index] = selected
+
+        bypass_sources[node_id] = output_sources
+        log.info(
+            "Subworkflow: bypass node %s (%s) output mapping=%s",
+            node_id,
+            _node_class_type(node),
+            output_sources,
+        )
+    return bypass_sources
+
+
 def _iter_widget_specs(class_type: str, linked_names: set):
     import nodes as _comfy_nodes
     cls = _comfy_nodes.NODE_CLASS_MAPPINGS.get(class_type)
@@ -160,7 +246,10 @@ def _iter_widget_specs(class_type: str, linked_names: set):
             opts = type_def[1] if len(type_def) > 1 and isinstance(type_def[1], dict) else {}
             if opts.get("forceInput"):
                 continue
-            if not (isinstance(input_type, list) or input_type in ("INT", "FLOAT", "STRING", "BOOLEAN")):
+            if not (
+                isinstance(input_type, list)
+                or input_type in ("COMBO", "INT", "FLOAT", "STRING", "BOOLEAN")
+            ):
                 continue
 
             skip = name in linked_names
@@ -178,13 +267,93 @@ def _iter_widget_specs(class_type: str, linked_names: set):
             widget_index += 2 if control_index is not None else 1
 
 
-def _get_widget_values(class_type: str, linked_names: set, widgets_values: list) -> dict:
+def _widget_input_type(input_def: dict) -> str | None:
+    widget = input_def.get("widget")
+    if not isinstance(widget, dict) or not widget.get("name"):
+        return None
+    input_type = input_def.get("type")
+    if input_type in ("COMBO", "INT", "FLOAT", "STRING", "BOOLEAN"):
+        return input_type
+    return None
+
+
+def _looks_like_control_after_generate(input_type: str, widgets_values: list, value_index: int) -> bool:
+    if input_type not in ("INT", "FLOAT"):
+        return False
+    control_index = value_index + 1
+    if control_index >= len(widgets_values):
+        return False
+    return str(widgets_values[control_index]).lower() in {
+        "fixed",
+        "increment",
+        "decrement",
+        "randomize",
+    }
+
+
+def _get_widget_values_from_saved_inputs(
+    class_type: str,
+    linked_names: set,
+    node_inputs: list,
+    widgets_values: list,
+) -> dict | None:
+    result = {}
+    widget_index = 0
+
+    for inp in node_inputs:
+        widget_name = (inp.get("widget") or {}).get("name")
+        input_type = _widget_input_type(inp)
+        if not widget_name or input_type is None:
+            continue
+        if widget_index >= len(widgets_values):
+            break
+
+        value = widgets_values[widget_index]
+        has_control = _looks_like_control_after_generate(input_type, widgets_values, widget_index)
+
+        if widget_name not in linked_names:
+            result[widget_name] = value
+
+        widget_index += 2 if has_control else 1
+
+    if widget_index == 0:
+        return None
+
+    return result
+
+
+def _get_widget_values(class_type: str, linked_names: set, widgets_values, node_inputs: list | None = None) -> dict:
     """
     Return {widget_name: value} by aligning widgets_values with the full ordered
     widget list for the node class, including hidden control-after-generate
     widgets that ComfyUI stores next to controlled numeric widgets.
     """
     result = {}
+    if isinstance(widgets_values, dict):
+        for spec in _iter_widget_specs(class_type, linked_names):
+            name = spec["name"]
+            if not spec["skip"] and name in widgets_values:
+                result[name] = widgets_values[name]
+        return result
+
+    if not isinstance(widgets_values, list):
+        log.warning(
+            "Subworkflow: node type %s has unsupported widgets_values type %s",
+            class_type,
+            type(widgets_values).__name__,
+        )
+        return result
+
+    if node_inputs:
+        saved_result = _get_widget_values_from_saved_inputs(
+            class_type,
+            linked_names,
+            node_inputs,
+            widgets_values,
+        )
+        if saved_result is not None:
+            return saved_result
+
     for spec in _iter_widget_specs(class_type, linked_names):
         index = spec["index"]
         if index >= len(widgets_values):
@@ -357,6 +526,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
     # Parse inner links.
     parsed = [_parse_link(lnk) for lnk in sg_links]
     sg_link_map = {lid: (src, ss) for lid, src, ss, _, _ in parsed}
+    sg_bypass_sources = _build_bypass_sources(sg_nodes, sg_link_map)
 
     # Build outer_values_by_slot: {subgraph_input_slot_index → resolved value}
     sg_input_name_to_slot = {inp.get("name"): i for i, inp in enumerate(sg_inputs_def)}
@@ -375,6 +545,8 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
     sg_refs: dict = {}
     for node in sg_nodes:
         nid = str(node.get("id"))
+        if nid in sg_bypass_sources:
+            continue
         ct  = _node_class_type(node)
         if not ct:
             log.warning("SWF sg: node id=%s has no class_type, skipping", nid)
@@ -389,6 +561,18 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
         if src is None:
             return None
         src_id, src_slot = str(src[0]), int(src[1])
+        if src_id in sg_bypass_sources:
+            bypass_src = sg_bypass_sources[src_id].get(src_slot)
+            if bypass_src is None:
+                log.warning("SWF sg: bypass node %s slot %d has no source", src_id, src_slot)
+                return None
+            if str(bypass_src[0]) == input_node_id:
+                return outer_values_by_slot.get(int(bypass_src[1]))
+            ref = sg_refs.get(str(bypass_src[0]))
+            if ref is None:
+                log.warning("SWF sg: bypass node %s source %s not in sg_refs", src_id, bypass_src[0])
+                return None
+            return ref.out(int(bypass_src[1]))
         if src_id == input_node_id:
             return outer_values_by_slot.get(src_slot)
         ref = sg_refs.get(src_id)
@@ -424,7 +608,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
                         linked_names.add(name)
                         log.warning("SWF sg: node %s (%s) input %r UNRESOLVED", nid, ct, name)
 
-        for wname, val in _get_widget_values(ct, linked_names, widgets_values).items():
+        for wname, val in _get_widget_values(ct, linked_names, widgets_values, node_inputs).items():
             gb_node.set_input(wname, val)
 
     # Collect output refs from the subgraph's virtual outputNode.
@@ -441,6 +625,16 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
             output_refs.append(None)
             continue
         src_id, src_slot = str(src[0]), int(src[1])
+        if src_id in sg_bypass_sources:
+            bypass_src = sg_bypass_sources[src_id].get(src_slot)
+            if bypass_src is None:
+                log.warning("SWF sg: output bypass node %s slot %d has no source", src_id, src_slot)
+                output_refs.append(None)
+                continue
+            src_id, src_slot = str(bypass_src[0]), int(bypass_src[1])
+            if src_id == input_node_id:
+                output_refs.append(outer_values_by_slot.get(src_slot))
+                continue
         ref = sg_refs.get(src_id)
         if ref is None:
             log.warning("SWF sg: output src node %s not in sg_refs", src_id)
@@ -459,6 +653,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
 
     parsed_links = [_parse_link(lnk) for lnk in links_list]
     link_map = {lid: (src, ss) for lid, src, ss, _, _ in parsed_links}
+    bypass_sources = _build_bypass_sources(nodes_list, link_map)
     dst_to_src: dict[str, tuple[str, int]] = {}
     for _, src, ss, dst, _ in parsed_links:
         dst_to_src.setdefault(dst, (src, ss))
@@ -496,6 +691,12 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
         if src_node_id in fo_src:
             src = fo_src[src_node_id]
             return resolve_link(src[0], src[1]) if src else None
+        if src_node_id in bypass_sources:
+            src = bypass_sources[src_node_id].get(src_slot)
+            if src is None:
+                log.warning("SWF: bypass node %s slot %d has no source", src_node_id, src_slot)
+                return None
+            return resolve_link(src[0], src[1])
         if src_node_id in subgraph_outputs:
             refs = subgraph_outputs[src_node_id]
             return refs[src_slot] if src_slot < len(refs) else None
@@ -510,6 +711,8 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     for node in nodes_list:
         nid = str(node["id"])
         if nid in func_node_ids:
+            continue
+        if nid in bypass_sources:
             continue
         ct = _node_class_type(node)
         if not ct:
@@ -526,6 +729,8 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     for node in nodes_list:
         nid = str(node["id"])
         if nid in func_node_ids:
+            continue
+        if nid in bypass_sources:
             continue
         ct = _node_class_type(node)
         if not ct or ct not in subgraph_defs:
@@ -570,7 +775,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
                     log.warning("SWF: node %s (%s) input %r: link %s not in link_map",
                                 nid, ct, name, link_id)
 
-        for wname, val in _get_widget_values(ct, linked_names, widgets_values).items():
+        for wname, val in _get_widget_values(ct, linked_names, widgets_values, node_inputs).items():
             gb_node.set_input(wname, val)
 
     # Collect output refs from Subworkflow Output nodes.

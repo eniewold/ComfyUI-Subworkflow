@@ -17,6 +17,17 @@ const NODE_TYPE = "SWF_Subworkflow";
 const MAX_SLOTS = 8;
 const LOG = "[SWF]";
 
+function slotSummary(slots) {
+    return (slots || []).map((slot, index) => ({
+        index,
+        name: slot?.name,
+        label: slot?.label,
+        type: slot?.type,
+        links: slot?.links,
+        link: slot?.link,
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -31,11 +42,13 @@ async function fetchWorkflowInfo(workflowName) {
         const resp = await api.fetchApi(
             `/subworkflow/info?workflow=${encodeURIComponent(workflowName)}`
         );
+        console.log(LOG, `fetchWorkflowInfo: response status ${resp.status} for "${workflowName}"`);
         if (!resp.ok) {
             console.warn(LOG, `fetchWorkflowInfo: HTTP ${resp.status} for "${workflowName}"`);
             return null;
         }
         const data = await resp.json();
+        console.log(LOG, "fetchWorkflowInfo: response payload", data);
         if (data.error) {
             console.warn(LOG, `fetchWorkflowInfo: server error for "${workflowName}":`, data.error);
             return null;
@@ -54,14 +67,17 @@ async function fetchWorkflowInfo(workflowName) {
  * re-addition problem that output slots do.
  */
 function updateInputSlots(node, inputs) {
+    console.log(LOG, "updateInputSlots: before", slotSummary(node.inputs));
     if (node.inputs) {
         for (let i = node.inputs.length - 1; i >= 0; i--) {
             if (node.inputs[i].name?.startsWith("swf_in_")) node.removeInput(i);
         }
     }
     inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
+        console.log(LOG, `updateInputSlots: adding swf_in_${i}`, inp);
         node.addInput(`swf_in_${i}`, "*", { label: inp.slot_name });
     });
+    console.log(LOG, "updateInputSlots: after", slotSummary(node.inputs));
 }
 
 /**
@@ -74,29 +90,35 @@ function updateInputSlots(node, inputs) {
  */
 function updateOutputSlots(node, outputs) {
     const needCount = Math.min(outputs.length, MAX_SLOTS);
+    console.log(LOG, "updateOutputSlots: before", slotSummary(node.outputs));
 
     // Remove excess out_* slots from the end, bypassing removeOutput().
     for (let i = (node.outputs || []).length - 1; i >= 0; i--) {
         const out = node.outputs[i];
         if (!/^out_\d+$/.test(out?.name)) continue;
         const idx = parseInt(out.name.slice(4));
-        if (idx >= needCount) node.outputs.splice(i, 1);
+        if (idx >= needCount) {
+            console.log(LOG, `updateOutputSlots: removing ${out.name} at index ${i}`);
+            node.outputs.splice(i, 1);
+        }
     }
 
     // Update labels on surviving slots.
     let n = 0;
     for (const out of (node.outputs || [])) {
         if (/^out_\d+$/.test(out.name) && n < needCount) {
+            console.log(LOG, `updateOutputSlots: updating ${out.name} label to`, outputs[n].slot_name);
             out.label = outputs[n++].slot_name;
         }
     }
 
     // Add any slots still missing (addOutput is safe — no connectionChange).
     for (let i = n; i < needCount; i++) {
+        console.log(LOG, `updateOutputSlots: adding out_${i}`, outputs[i]);
         node.addOutput(`out_${i}`, "*", { label: outputs[i].slot_name });
     }
 
-    console.log(LOG, `updateOutputSlots: ${needCount} slot(s)`);
+    console.log(LOG, `updateOutputSlots: ${needCount} slot(s), after`, slotSummary(node.outputs));
 }
 
 // ---------------------------------------------------------------------------
@@ -105,9 +127,16 @@ function updateOutputSlots(node, outputs) {
 
 /** Full refresh — used when user picks a new workflow via the combo. */
 function applyWorkflowInfo(node, info) {
-    if (!info) return;
+    if (!info) {
+        console.warn(LOG, "applyWorkflowInfo: no workflow info to apply", { nodeId: node.id });
+        return;
+    }
     const { inputs = [], outputs = [] } = info;
-    console.log(LOG, `applyWorkflowInfo: ${inputs.length} input(s), ${outputs.length} output(s)`);
+    console.log(LOG, `applyWorkflowInfo: ${inputs.length} input(s), ${outputs.length} output(s)`, {
+        nodeId: node.id,
+        currentInputs: slotSummary(node.inputs),
+        currentOutputs: slotSummary(node.outputs),
+    });
     updateInputSlots(node, inputs);
     updateOutputSlots(node, outputs);
     node.setSize(node.computeSize());
@@ -122,9 +151,16 @@ function applyWorkflowInfo(node, info) {
  *   already-restored links on out_0 while removing the Python-padded extras.
  */
 function applyWorkflowInfoOnLoad(node, info, savedInputCount) {
-    if (!info) return;
+    if (!info) {
+        console.warn(LOG, "applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
+        return;
+    }
     const { inputs = [], outputs = [] } = info;
-    console.log(LOG, `applyWorkflowInfoOnLoad: server=${inputs.length}in/${outputs.length}out, savedInputs=${savedInputCount}`);
+    console.log(LOG, `applyWorkflowInfoOnLoad: server=${inputs.length}in/${outputs.length}out, savedInputs=${savedInputCount}`, {
+        nodeId: node.id,
+        currentInputs: slotSummary(node.inputs),
+        currentOutputs: slotSummary(node.outputs),
+    });
 
     // Inputs
     if (savedInputCount === inputs.length) {
@@ -157,7 +193,7 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== NODE_TYPE) return;
 
-        console.log(LOG, "beforeRegisterNodeDef: patching", NODE_TYPE);
+        console.log(LOG, "beforeRegisterNodeDef: patching", NODE_TYPE, nodeData);
 
         // -- onConfigure: called when a saved workflow is loaded ---------------
         const origOnConfigure = nodeType.prototype.onConfigure;
@@ -173,12 +209,19 @@ app.registerExtension({
 
             const widget = this.widgets?.find(w => w.name === "workflow");
             const workflowName = widget?.value;
-            console.log(LOG, "onConfigure: workflow widget value =", workflowName);
+            console.log(LOG, "onConfigure: workflow widget value =", workflowName, {
+                nodeId: this.id,
+                widgets: (this.widgets || []).map(w => ({ name: w.name, value: w.value, type: w.type })),
+                inputs: slotSummary(this.inputs),
+                outputs: slotSummary(this.outputs),
+            });
 
             if (workflowName) {
                 fetchWorkflowInfo(workflowName).then(info => {
                     applyWorkflowInfoOnLoad(this, info, savedInputCount);
                 });
+            } else {
+                console.warn(LOG, "onConfigure: workflow widget not found or empty", { nodeId: this.id });
             }
         };
 
@@ -187,7 +230,11 @@ app.registerExtension({
         nodeType.prototype.onWidgetChanged = function (name, value, oldValue, widget) {
             if (origOnWidgetChanged) origOnWidgetChanged.call(this, name, value, oldValue, widget);
             if (name === "workflow") {
-                console.log(LOG, `onWidgetChanged: workflow changed from "${oldValue}" to "${value}"`);
+                console.log(LOG, `onWidgetChanged: workflow changed from "${oldValue}" to "${value}"`, {
+                    nodeId: this.id,
+                    inputs: slotSummary(this.inputs),
+                    outputs: slotSummary(this.outputs),
+                });
                 fetchWorkflowInfo(value).then(info => applyWorkflowInfo(this, info));
             }
         };
@@ -198,9 +245,16 @@ app.registerExtension({
             if (origOnAdded) origOnAdded.call(this);
             const widget = this.widgets?.find(w => w.name === "workflow");
             const val = widget?.value;
-            console.log(LOG, "onAdded: node placed on canvas, workflow =", val);
+            console.log(LOG, "onAdded: node placed on canvas, workflow =", val, {
+                nodeId: this.id,
+                widgets: (this.widgets || []).map(w => ({ name: w.name, value: w.value, type: w.type })),
+                inputs: slotSummary(this.inputs),
+                outputs: slotSummary(this.outputs),
+            });
             if (val) {
                 fetchWorkflowInfo(val).then(info => applyWorkflowInfo(this, info));
+            } else {
+                console.warn(LOG, "onAdded: workflow widget not found or empty", { nodeId: this.id });
             }
         };
     },

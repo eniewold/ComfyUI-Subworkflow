@@ -29,7 +29,7 @@ class Subworkflow(io.ComfyNode):
         return io.Schema(
             node_id="SWF_Subworkflow",
             display_name="Subworkflow",
-            category="subworkflow",
+            category="Subworkflow",
             description=(
                 "Executes a selected workflow as an expandable subworkflow, "
                 "using Subworkflow Input and Subworkflow Output boundary nodes."

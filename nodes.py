@@ -32,7 +32,7 @@ class SubworkflowInput(io.ComfyNode):
         return io.Schema(
             node_id="SWF_SubworkflowInput",
             display_name="Subworkflow Input",
-            category="subworkflow",
+            category="Subworkflow",
             description=(
                 "Marks an input boundary for a reusable workflow. "
                 "The type is inferred from whatever connects to the output."
@@ -67,7 +67,7 @@ class SubworkflowOutput(io.ComfyNode):
         return io.Schema(
             node_id="SWF_SubworkflowOutput",
             display_name="Subworkflow Output",
-            category="subworkflow",
+            category="Subworkflow",
             description=(
                 "Marks an output boundary for a reusable workflow. "
                 "The type is inferred from whatever connects to the input."
