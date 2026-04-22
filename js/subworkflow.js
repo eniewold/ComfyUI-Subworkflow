@@ -28,6 +28,10 @@ function slotSummary(slots) {
     }));
 }
 
+function swfSlotType(info) {
+    return info?.type || "*";
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -75,7 +79,7 @@ function updateInputSlots(node, inputs) {
     }
     inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
         console.log(LOG, `updateInputSlots: adding swf_in_${i}`, inp);
-        node.addInput(`swf_in_${i}`, "*", { label: inp.slot_name });
+        node.addInput(`swf_in_${i}`, swfSlotType(inp), { label: inp.slot_name });
     });
     console.log(LOG, "updateInputSlots: after", slotSummary(node.inputs));
 }
@@ -107,15 +111,17 @@ function updateOutputSlots(node, outputs) {
     let n = 0;
     for (const out of (node.outputs || [])) {
         if (/^out_\d+$/.test(out.name) && n < needCount) {
-            console.log(LOG, `updateOutputSlots: updating ${out.name} label to`, outputs[n].slot_name);
-            out.label = outputs[n++].slot_name;
+            console.log(LOG, `updateOutputSlots: updating ${out.name}`, outputs[n]);
+            out.label = outputs[n].slot_name;
+            out.type = swfSlotType(outputs[n]);
+            n++;
         }
     }
 
     // Add any slots still missing (addOutput is safe — no connectionChange).
     for (let i = n; i < needCount; i++) {
         console.log(LOG, `updateOutputSlots: adding out_${i}`, outputs[i]);
-        node.addOutput(`out_${i}`, "*", { label: outputs[i].slot_name });
+        node.addOutput(`out_${i}`, swfSlotType(outputs[i]), { label: outputs[i].slot_name });
     }
 
     console.log(LOG, `updateOutputSlots: ${needCount} slot(s), after`, slotSummary(node.outputs));
@@ -168,7 +174,9 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount) {
         let idx = 0;
         for (const inp of (node.inputs || [])) {
             if (inp.name?.startsWith("swf_in_") && idx < inputs.length) {
-                inp.label = inputs[idx++].slot_name;
+                inp.label = inputs[idx].slot_name;
+                inp.type = swfSlotType(inputs[idx]);
+                idx++;
             }
         }
     } else {

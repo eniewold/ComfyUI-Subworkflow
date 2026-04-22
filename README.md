@@ -84,9 +84,14 @@ Use `at execution` set to `reload` when the inner workflow file should be read f
 - [ ] When no node is attached to an output of `Subworkflow`, an error occurs; it could be treated as an optional output.
 - [ ] Used paths with macro elements are not formatted currectly when used in inner workflow? (use Video Combine node with %date:yyyy-MM-dd%/WAN/Video)
 - [ ] Nodes linked to Subworkflow Output are not called when the inner workflow is executed as part of a larger workflow. Check if this is expected behaviour.
+- [ ] When linked nodes have a mismatch in expected input type and the value provided by Subworkflow Output, no error is given but passed to the next node. Implement type checking and error handling?
+- [ ] Green progress borders appear on more than one node when executing a inner workflow as part of a larger workflow. These borders should be limited to the currently executing node(s) outer workflow.
 
 Fixed:
 - [x] `Subworkflow Output` can be placed between two nodes and still behave as a passthrough.
 - [x] `Subworkflow Input` transparency for nodes is handled for tested pass-through cases such as concatenate string.
 - [x] Inner workflow nodes with randomize-after-processing preserve updated values when `at execution` is set to `keep loaded`.
 - [x] `Subworkflow`, `Subworkflow Input`, and `Subworkflow Output` are all V3 nodes.
+
+## Wish List
+- [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. 

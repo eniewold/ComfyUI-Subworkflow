@@ -90,12 +90,24 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
         nid = str(node.get("id"))
         if ntype == SWF_SUBWORKFLOW_INPUT:
             slot_name = _boundary_slot_name(node, nid)
-            log.info("Subworkflow: found UI input boundary node=%s slot=%r", nid, slot_name)
-            inputs.append({"node_id": nid, "slot_name": slot_name})
+            slot_type = _boundary_output_type(node)
+            log.info(
+                "Subworkflow: found UI input boundary node=%s slot=%r type=%s",
+                nid,
+                slot_name,
+                slot_type,
+            )
+            inputs.append({"node_id": nid, "slot_name": slot_name, "type": slot_type})
         elif ntype == SWF_SUBWORKFLOW_OUTPUT:
             slot_name = _boundary_slot_name(node, nid)
-            log.info("Subworkflow: found UI output boundary node=%s slot=%r", nid, slot_name)
-            outputs.append({"node_id": nid, "slot_name": slot_name})
+            slot_type = _boundary_output_type(node) or _boundary_value_input_type(node)
+            log.info(
+                "Subworkflow: found UI output boundary node=%s slot=%r type=%s",
+                nid,
+                slot_name,
+                slot_type,
+            )
+            outputs.append({"node_id": nid, "slot_name": slot_name, "type": slot_type})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
     return inputs, outputs
@@ -110,6 +122,20 @@ def _boundary_slot_name(node: dict, fallback: str) -> str:
     return fallback
 
 
+def _boundary_output_type(node: dict) -> str:
+    outputs = node.get("outputs") or []
+    if outputs and isinstance(outputs[0], dict):
+        return outputs[0].get("type") or "*"
+    return "*"
+
+
+def _boundary_value_input_type(node: dict) -> str:
+    for inp in node.get("inputs") or []:
+        if inp.get("name") == "value":
+            return inp.get("type") or "*"
+    return "*"
+
+
 def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
     inputs, outputs = [], []
     for nid, node in data.items():
@@ -118,11 +144,11 @@ def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
         ct = node.get("class_type", "")
         slot = node.get("inputs", {}).get("slot_name", nid)
         if ct == SWF_SUBWORKFLOW_INPUT:
-            log.info("Subworkflow: found API input boundary node=%s slot=%r", nid, slot)
-            inputs.append({"node_id": nid, "slot_name": slot})
+            log.info("Subworkflow: found API input boundary node=%s slot=%r type=*", nid, slot)
+            inputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
         elif ct == SWF_SUBWORKFLOW_OUTPUT:
-            log.info("Subworkflow: found API output boundary node=%s slot=%r", nid, slot)
-            outputs.append({"node_id": nid, "slot_name": slot})
+            log.info("Subworkflow: found API output boundary node=%s slot=%r type=*", nid, slot)
+            outputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
     return inputs, outputs
@@ -495,6 +521,35 @@ def build_expansion(data: dict, outer_inputs: dict):
     return _build_expansion_api(data, outer_inputs)
 
 
+def _is_graph_link(value) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and isinstance(value[0], str)
+        and isinstance(value[1], (int, float))
+    )
+
+
+def _validate_outer_runtime_inputs(inputs_info: list[dict], outer_inputs: dict, workflow_format: str):
+    for i, inp in enumerate(inputs_info):
+        expected_type = inp.get("type") or "*"
+        if expected_type in ("*", ""):
+            continue
+
+        key = f"swf_in_{i}"
+        value = outer_inputs.get(key)
+        if value is None or _is_graph_link(value):
+            continue
+
+        if expected_type == "VIDEO" and not hasattr(value, "get_components"):
+            raise TypeError(
+                f"Subworkflow input {i} '{inp.get('slot_name')}' expects VIDEO "
+                f"from {workflow_format} boundary node {inp.get('node_id')}, "
+                f"but received {type(value).__name__}. Connect a VIDEO output, "
+                "not IMAGE frames."
+            )
+
+
 def _build_subgraph_defs(data: dict) -> dict:
     """Extract subgraph (group node) definitions from workflow data, keyed by UUID."""
     result = {}
@@ -659,6 +714,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
         dst_to_src.setdefault(dst, (src, ss))
 
     inputs_info, outputs_info = _get_workflow_io_ui(data)
+    _validate_outer_runtime_inputs(inputs_info, outer_inputs, "UI")
 
     fi_node_ids  = {inp["node_id"] for inp in inputs_info}
     fo_node_ids  = {out["node_id"] for out in outputs_info}
@@ -792,6 +848,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
 
 def _build_expansion_api(data: dict, outer_inputs: dict):
     inputs_info, outputs_info = _get_workflow_io_api(data)
+    _validate_outer_runtime_inputs(inputs_info, outer_inputs, "API")
 
     fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
     missing = [
