@@ -8,14 +8,14 @@ import os
 import re
 from comfy_execution.graph_utils import GraphBuilder
 
-log = logging.getLogger("ComfyUI-Workflow-Functions")
+log = logging.getLogger("ComfyUI-Subworkflow")
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
 )
 
-WFF_FUNC_INPUT = "WFF_FunctionInput"
-WFF_FUNC_OUTPUT = "WFF_FunctionOutput"
+SWF_SUBWORKFLOW_INPUT = "SWF_SubworkflowInput"
+SWF_SUBWORKFLOW_OUTPUT = "SWF_SubworkflowOutput"
 MAX_SLOTS = 8
 PLACEHOLDER = "[select workflow]"
 
@@ -75,9 +75,9 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
         nid = str(node.get("id"))
         widgets = node.get("widgets_values") or []
         slot_name = widgets[0] if widgets else nid
-        if ntype == WFF_FUNC_INPUT:
+        if ntype == SWF_SUBWORKFLOW_INPUT:
             inputs.append({"node_id": nid, "slot_name": slot_name})
-        elif ntype == WFF_FUNC_OUTPUT:
+        elif ntype == SWF_SUBWORKFLOW_OUTPUT:
             outputs.append({"node_id": nid, "slot_name": slot_name})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
@@ -91,9 +91,9 @@ def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
             continue
         ct = node.get("class_type", "")
         slot = node.get("inputs", {}).get("slot_name", nid)
-        if ct == WFF_FUNC_INPUT:
+        if ct == SWF_SUBWORKFLOW_INPUT:
             inputs.append({"node_id": nid, "slot_name": slot})
-        elif ct == WFF_FUNC_OUTPUT:
+        elif ct == SWF_SUBWORKFLOW_OUTPUT:
             outputs.append({"node_id": nid, "slot_name": slot})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
@@ -195,7 +195,7 @@ def build_expansion(data: dict, outer_inputs: dict):
     Build a GraphBuilder subgraph from an inner workflow.
     Accepts both UI format and API format.
 
-    outer_inputs: {"wff_in_0": value, "wff_in_1": value, ...}
+    outer_inputs: {"swf_in_0": value, "swf_in_1": value, ...}
     Returns (output_refs, graph).
     """
     if is_ui_format(data):
@@ -254,10 +254,10 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
         nid = str(node.get("id"))
         ct  = _node_class_type(node)
         if not ct:
-            log.warning("WFF sg: node id=%s has no class_type, skipping", nid)
+            log.warning("SWF sg: node id=%s has no class_type, skipping", nid)
             continue
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
-            log.warning("WFF sg: node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
+            log.warning("SWF sg: node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
         sg_refs[nid] = graph.node(ct, id=f"{id_prefix}_{nid}")
 
@@ -270,7 +270,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
             return outer_values_by_slot.get(src_slot)
         ref = sg_refs.get(src_id)
         if ref is None:
-            log.warning("WFF sg: link %s src node %s not in sg_refs", link_id, src_id)
+            log.warning("SWF sg: link %s src node %s not in sg_refs", link_id, src_id)
             return None
         return ref.out(src_slot)
 
@@ -299,7 +299,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
                         pass  # outer not wired — fall through to inner widget default
                     else:
                         linked_names.add(name)
-                        log.warning("WFF sg: node %s (%s) input %r UNRESOLVED", nid, ct, name)
+                        log.warning("SWF sg: node %s (%s) input %r UNRESOLVED", nid, ct, name)
 
         for wname, val in _get_widget_values(ct, linked_names, widgets_values).items():
             gb_node.set_input(wname, val)
@@ -309,18 +309,18 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
     for out_def in sg_outputs_def:
         link_ids = out_def.get("linkIds") or []
         if not link_ids:
-            log.warning("WFF sg: output %r has no linkIds", out_def.get("name"))
+            log.warning("SWF sg: output %r has no linkIds", out_def.get("name"))
             output_refs.append(None)
             continue
         src = sg_link_map.get(str(link_ids[0]))
         if src is None:
-            log.warning("WFF sg: output link %s not in sg_link_map", link_ids[0])
+            log.warning("SWF sg: output link %s not in sg_link_map", link_ids[0])
             output_refs.append(None)
             continue
         src_id, src_slot = str(src[0]), int(src[1])
         ref = sg_refs.get(src_id)
         if ref is None:
-            log.warning("WFF sg: output src node %s not in sg_refs", src_id)
+            log.warning("SWF sg: output src node %s not in sg_refs", src_id)
             output_refs.append(None)
             continue
         output_refs.append(ref.out(src_slot))
@@ -346,7 +346,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     fo_node_ids  = {out["node_id"] for out in outputs_info}
     func_node_ids = fi_node_ids | fo_node_ids
 
-    fi_value = {inp["node_id"]: outer_inputs.get(f"wff_in_{i}") for i, inp in enumerate(inputs_info)}
+    fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
 
     graph = GraphBuilder()
     node_refs: dict = {}
@@ -360,24 +360,24 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
             return refs[src_slot] if src_slot < len(refs) else None
         ref = node_refs.get(src_node_id)
         if ref is None:
-            log.warning("WFF: node %s slot %d unresolvable", src_node_id, src_slot)
+            log.warning("SWF: node %s slot %d unresolvable", src_node_id, src_slot)
         return ref.out(src_slot) if ref is not None else None
 
     import nodes as _comfy_nodes
 
-    # Pass 1: register regular inner nodes (skip WFF boundary and subgraph nodes).
+    # Pass 1: register regular inner nodes (skip SWF boundary and subgraph nodes).
     for node in nodes_list:
         nid = str(node["id"])
         if nid in func_node_ids:
             continue
         ct = _node_class_type(node)
         if not ct:
-            log.warning("WFF: node id=%s has no resolvable class_type, skipping", nid)
+            log.warning("SWF: node id=%s has no resolvable class_type, skipping", nid)
             continue
         if ct in subgraph_defs:
             continue  # expanded separately below
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
-            log.warning("WFF: node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
+            log.warning("SWF: node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
         node_refs[nid] = graph.node(ct, id=nid)
 
@@ -424,20 +424,20 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
                     if resolved is not None:
                         gb_node.set_input(name, resolved)
                     else:
-                        log.warning("WFF: node %s (%s) input %r unresolved", nid, ct, name)
+                        log.warning("SWF: node %s (%s) input %r unresolved", nid, ct, name)
                 else:
-                    log.warning("WFF: node %s (%s) input %r: link %s not in link_map",
+                    log.warning("SWF: node %s (%s) input %r: link %s not in link_map",
                                 nid, ct, name, link_id)
 
         for wname, val in _get_widget_values(ct, linked_names, widgets_values).items():
             gb_node.set_input(wname, val)
 
-    # Collect output refs from FunctionOutput nodes.
+    # Collect output refs from Subworkflow Output nodes.
     output_refs = []
     for out in outputs_info:
         src = dst_to_src.get(out["node_id"])
         if src is None:
-            log.warning("WFF: FunctionOutput node=%s has no incoming link", out["node_id"])
+            log.warning("SWF: Subworkflow Output node=%s has no incoming link", out["node_id"])
         ref = resolve_link(src[0], src[1]) if src else None
         output_refs.append(ref)
 
@@ -447,7 +447,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
 def _build_expansion_api(data: dict, outer_inputs: dict):
     inputs_info, outputs_info = _get_workflow_io_api(data)
 
-    fi_value = {inp["node_id"]: outer_inputs.get(f"wff_in_{i}") for i, inp in enumerate(inputs_info)}
+    fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
     func_node_ids = {inp["node_id"] for inp in inputs_info} | {out["node_id"] for out in outputs_info}
 
     graph = GraphBuilder()
@@ -460,7 +460,7 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
             return fi_value[src_id]
         ref = node_refs.get(src_id)
         if ref is None:
-            log.warning("WFF api: node %s slot %d unresolvable", src_id, src_slot)
+            log.warning("SWF api: node %s slot %d unresolvable", src_id, src_slot)
         return ref.out(src_slot) if ref is not None else None
 
     for nid, node in data.items():
@@ -483,7 +483,7 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
                 if resolved is not None:
                     gb_node.set_input(inp_name, resolved)
                 else:
-                    log.warning("WFF api: node %s input %r unresolved link %s", nid, inp_name, inp_val)
+                    log.warning("SWF api: node %s input %r unresolved link %s", nid, inp_name, inp_val)
             else:
                 gb_node.set_input(inp_name, inp_val)
 

@@ -1,17 +1,17 @@
 """
-FunctionInput and FunctionOutput: transparent passthrough nodes with MatchType.
+Subworkflow Input and Subworkflow Output: transparent passthrough nodes with MatchType.
 """
 from comfy_api.latest import io
 
 
-class FunctionInput(io.ComfyNode):
+class SubworkflowInput(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         tpl = io.MatchType.Template("T")
         return io.Schema(
-            node_id="WFF_FunctionInput",
+            node_id="SWF_SubworkflowInput",
             display_name="Subworkflow Input",
-            category="workflow_functions",
+            category="subworkflow",
             description=(
                 "Marks an input boundary for a reusable workflow. "
                 "The type is inferred from whatever connects to the output."
@@ -30,14 +30,14 @@ class FunctionInput(io.ComfyNode):
         return io.NodeOutput(value)
 
 
-class FunctionOutput(io.ComfyNode):
+class SubworkflowOutput(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         tpl = io.MatchType.Template("T")
         return io.Schema(
-            node_id="WFF_FunctionOutput",
+            node_id="SWF_SubworkflowOutput",
             display_name="Subworkflow Output",
-            category="workflow_functions",
+            category="subworkflow",
             description=(
                 "Marks an output boundary for a reusable workflow. "
                 "The type is inferred from whatever connects to the input."

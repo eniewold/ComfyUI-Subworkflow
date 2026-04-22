@@ -1,5 +1,5 @@
 """
-Custom API routes for the Workflow Functions extension.
+Custom API routes for the Subworkflow extension.
 """
 import json
 from aiohttp import web
@@ -13,10 +13,9 @@ def setup_routes():
         return
     routes = PromptServer.instance.routes
 
-    @routes.get("/workflow_functions/info")
     async def get_workflow_info(request: web.Request):
         """
-        Returns the FunctionInput / FunctionOutput slot info for a workflow.
+        Returns the Subworkflow Input / Subworkflow Output slot info for a workflow.
         Response: {"inputs": [...], "outputs": [...], "error": null | str}
         """
         workflow_name = request.rel_url.query.get("workflow", "")
@@ -32,7 +31,10 @@ def setup_routes():
         inputs, outputs = get_workflow_io(data)
         return web.json_response({"inputs": inputs, "outputs": outputs, "error": None})
 
-    @routes.get("/workflow_functions/list")
+    routes.get("/subworkflow/info")(get_workflow_info)
+
     async def list_workflows(request: web.Request):
         """Returns the available workflow file names."""
         return web.json_response(list_workflow_files())
+
+    routes.get("/subworkflow/list")(list_workflows)

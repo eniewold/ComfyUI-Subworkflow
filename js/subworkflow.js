@@ -1,11 +1,11 @@
 /**
- * Frontend extension for WFF_FunctionWorkflow.
+ * Frontend extension for the Subworkflow node.
  *
  * When the "workflow" widget changes, this extension queries the backend for
- * the inner workflow's FunctionInput / FunctionOutput info and dynamically
+ * the inner workflow's Subworkflow Input / Subworkflow Output info and dynamically
  * updates the node's input and output slots.
  *
- * Input slots are named  wff_in_0, wff_in_1, …  (matching the Python backend).
+ * Input slots are named  swf_in_0, swf_in_1, …  (matching the Python backend).
  * Output slots are named out_0, out_1, …         (matching RETURN_NAMES).
  * Both use display labels from the inner workflow's slot_name values.
  */
@@ -13,9 +13,9 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const NODE_TYPE = "WFF_FunctionWorkflow";
+const NODE_TYPE = "SWF_Subworkflow";
 const MAX_SLOTS = 8;
-const LOG = "[WFF]";
+const LOG = "[SWF]";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,7 +29,7 @@ async function fetchWorkflowInfo(workflowName) {
     console.log(LOG, "fetchWorkflowInfo: fetching info for", workflowName);
     try {
         const resp = await api.fetchApi(
-            `/workflow_functions/info?workflow=${encodeURIComponent(workflowName)}`
+            `/subworkflow/info?workflow=${encodeURIComponent(workflowName)}`
         );
         if (!resp.ok) {
             console.warn(LOG, `fetchWorkflowInfo: HTTP ${resp.status} for "${workflowName}"`);
@@ -49,18 +49,18 @@ async function fetchWorkflowInfo(workflowName) {
 }
 
 /**
- * Update the dynamic input slots (wff_in_*) on a node.
+ * Update the dynamic input slots (swf_in_*) on a node.
  * Always does a full remove-and-add since input slots don't suffer from the
  * re-addition problem that output slots do.
  */
 function updateInputSlots(node, inputs) {
     if (node.inputs) {
         for (let i = node.inputs.length - 1; i >= 0; i--) {
-            if (node.inputs[i].name?.startsWith("wff_in_")) node.removeInput(i);
+            if (node.inputs[i].name?.startsWith("swf_in_")) node.removeInput(i);
         }
     }
     inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
-        node.addInput(`wff_in_${i}`, "*", { label: inp.slot_name });
+        node.addInput(`swf_in_${i}`, "*", { label: inp.slot_name });
     });
 }
 
@@ -131,7 +131,7 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount) {
         console.log(LOG, "applyWorkflowInfoOnLoad: input count matches, updating labels only");
         let idx = 0;
         for (const inp of (node.inputs || [])) {
-            if (inp.name?.startsWith("wff_in_") && idx < inputs.length) {
+            if (inp.name?.startsWith("swf_in_") && idx < inputs.length) {
                 inp.label = inputs[idx++].slot_name;
             }
         }
@@ -152,7 +152,7 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount) {
 // ---------------------------------------------------------------------------
 
 app.registerExtension({
-    name: "WFF.FunctionWorkflow",
+    name: "SWF.Subworkflow",
 
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== NODE_TYPE) return;
@@ -166,7 +166,7 @@ app.registerExtension({
 
             // Read saved dynamic input count BEFORE origOnConfigure may change things.
             const savedInputCount = (serializedNode.inputs || [])
-                .filter(i => i.name?.startsWith("wff_in_")).length;
+                .filter(i => i.name?.startsWith("swf_in_")).length;
             console.log(LOG, `onConfigure: serialized node has ${savedInputCount} dynamic input(s)`);
 
             if (origOnConfigure) origOnConfigure.call(this, serializedNode);

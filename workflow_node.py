@@ -1,6 +1,6 @@
 """
-FunctionWorkflow: loads an inner workflow (UI or API format), infers its I/O from
-FunctionInput / FunctionOutput nodes, and executes it as a subgraph expansion.
+Subworkflow: loads an inner workflow (UI or API format), infers its I/O from
+Subworkflow Input / Subworkflow Output nodes, and executes it as a subgraph expansion.
 """
 from .workflow_utils import (
     list_workflow_files,
@@ -22,10 +22,10 @@ class _AnyType(str):
 _ANY = _AnyType("*")
 
 
-class FunctionWorkflow:
+class Subworkflow:
     """
-    Selects a saved API-format workflow, exposes its FunctionInput nodes as
-    inputs and its FunctionOutput nodes as outputs, then executes the inner
+    Selects a saved API-format workflow, exposes its Subworkflow Input nodes as
+    inputs and its Subworkflow Output nodes as outputs, then executes the inner
     workflow as a transparent subgraph when the outer workflow runs.
     """
 
@@ -42,11 +42,11 @@ class FunctionWorkflow:
     RETURN_TYPES = (_ANY,) * MAX_SLOTS
     RETURN_NAMES = tuple(f"out_{i}" for i in range(MAX_SLOTS))
     FUNCTION = "execute"
-    CATEGORY = "workflow_functions"
+    CATEGORY = "subworkflow"
 
     @classmethod
     def VALIDATE_INPUTS(cls, input_types=None, **kwargs):
-        # Accept any incoming types for dynamic wff_in_* inputs.
+        # Accept any incoming types for dynamic swf_in_* inputs.
         return True
 
     @classmethod
