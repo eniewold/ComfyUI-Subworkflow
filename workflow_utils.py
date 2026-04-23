@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import re
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -59,44 +60,80 @@ def load_workflow_file(filename: str) -> dict:
     return data
 
 
-def load_workflow_url(url: str) -> dict:
+def load_workflow_url(url: str, verify_ssl: bool = True) -> dict:
+    log.info("Subworkflow URL loader: entered with url=%r verify_ssl=%s", url, verify_ssl)
     parsed = urllib.parse.urlparse(url)
+    log.info(
+        "Subworkflow URL loader: parsed scheme=%r netloc=%r path=%r query_present=%s",
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        bool(parsed.query),
+    )
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        log.warning("Subworkflow URL loader: rejecting invalid absolute URL %r", url)
         raise ValueError("Workflow URL must be an absolute http:// or https:// URL.")
 
-    log.info("Subworkflow: loading workflow URL %r", url)
+    log.info(
+        "Subworkflow URL loader: opening URL %r timeout=%s max_bytes=%s verify_ssl=%s",
+        url,
+        URL_WORKFLOW_TIMEOUT,
+        MAX_URL_WORKFLOW_BYTES,
+        verify_ssl,
+    )
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "ComfyUI-Subworkflow/1.0"},
     )
+    context = None if verify_ssl else ssl._create_unverified_context()
+    if not verify_ssl:
+        log.warning("Subworkflow URL loader: SSL certificate verification disabled for %r", url)
     try:
-        with urllib.request.urlopen(request, timeout=URL_WORKFLOW_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=URL_WORKFLOW_TIMEOUT, context=context) as response:
             status = getattr(response, "status", 200)
+            log.info(
+                "Subworkflow URL loader: response opened status=%s content_type=%r content_length=%r final_url=%r",
+                status,
+                response.headers.get("Content-Type"),
+                response.headers.get("Content-Length"),
+                response.geturl(),
+            )
             if status < 200 or status >= 300:
+                log.warning("Subworkflow URL loader: rejecting HTTP status %s for %r", status, url)
                 raise ValueError(f"Workflow URL returned HTTP {status}.")
 
             content_length = response.headers.get("Content-Length")
             if content_length and int(content_length) > MAX_URL_WORKFLOW_BYTES:
+                log.warning(
+                    "Subworkflow URL loader: rejecting oversized Content-Length=%s for %r",
+                    content_length,
+                    url,
+                )
                 raise ValueError(
                     f"Workflow URL response is too large "
                     f"({content_length} bytes; limit {MAX_URL_WORKFLOW_BYTES})."
                 )
 
             raw = response.read(MAX_URL_WORKFLOW_BYTES + 1)
+            log.info("Subworkflow URL loader: read %d byte(s) from %r", len(raw), url)
     except urllib.error.HTTPError as e:
+        log.warning("Subworkflow URL loader: HTTPError for %r: %s", url, e)
         raise ValueError(f"Workflow URL returned HTTP {e.code}.") from e
     except urllib.error.URLError as e:
+        log.warning("Subworkflow URL loader: URLError for %r: %s", url, e)
         raise ValueError(f"Failed to load workflow URL: {e.reason}") from e
 
     if len(raw) > MAX_URL_WORKFLOW_BYTES:
+        log.warning("Subworkflow URL loader: rejecting oversized body for %r", url)
         raise ValueError(
             f"Workflow URL response is too large "
             f"(limit {MAX_URL_WORKFLOW_BYTES} bytes)."
         )
 
+    log.info("Subworkflow URL loader: decoding JSON from %r", url)
     data = json.loads(raw.decode("utf-8"))
     log.info(
-        "Subworkflow: loaded workflow URL %r format=%s top_level_keys=%s",
+        "Subworkflow URL loader: loaded workflow URL %r format=%s top_level_keys=%s",
         url,
         "UI" if is_ui_format(data) else "API",
         sorted(data.keys())[:12],

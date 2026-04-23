@@ -169,6 +169,7 @@ class SubworkflowFromURL(BaseSubworkflow):
 
     @classmethod
     def define_schema(cls):
+        log.info("SubworkflowFromURL: define_schema called")
         return io.Schema(
             node_id="SWF_SubworkflowFromURL",
             display_name="Subworkflow (from URL)",
@@ -180,6 +181,13 @@ class SubworkflowFromURL(BaseSubworkflow):
             ),
             inputs=[
                 io.String.Input("url", multiline=False, default=""),
+                io.Boolean.Input(
+                    "verify_ssl",
+                    display_name="verify SSL",
+                    default=True,
+                    label_on="verify",
+                    label_off="skip",
+                ),
                 _reload_input(),
             ],
             outputs=_subworkflow_outputs(),
@@ -189,22 +197,44 @@ class SubworkflowFromURL(BaseSubworkflow):
 
     @classmethod
     def _source_label(cls, url: str, **kwargs) -> str:
+        log.info("SubworkflowFromURL: _source_label url=%r", url)
         return url
 
     @classmethod
-    def _source_cache_key(cls, url: str, **kwargs) -> str:
-        return f"url:{url.strip()}"
+    def _source_cache_key(cls, url: str, verify_ssl: bool = True, **kwargs) -> str:
+        log.info(
+            "SubworkflowFromURL: _source_cache_key url=%r stripped=%r verify_ssl=%s",
+            url,
+            url.strip(),
+            verify_ssl,
+        )
+        return f"url:{url.strip()}:verify_ssl:{bool(verify_ssl)}"
 
     @classmethod
-    def _load_source(cls, url: str, **kwargs) -> dict:
+    def _load_source(cls, url: str, verify_ssl: bool = True, **kwargs) -> dict:
+        log.info(
+            "SubworkflowFromURL: _load_source url=%r verify_ssl=%s kwargs_keys=%s",
+            url,
+            verify_ssl,
+            sorted(kwargs.keys()),
+        )
         if not url:
+            log.warning("SubworkflowFromURL: _load_source missing URL")
             raise ValueError("No workflow URL specified.")
-        return load_workflow_url(url.strip())
+        return load_workflow_url(url.strip(), verify_ssl=bool(verify_ssl))
 
     @classmethod
-    def execute(cls, url: str, reload_each_execution=True, **kwargs):
+    def execute(cls, url: str, verify_ssl=True, reload_each_execution=True, **kwargs):
+        log.info(
+            "SubworkflowFromURL: execute called url=%r verify_ssl=%s reload_each_execution=%s dynamic_inputs=%s",
+            url,
+            verify_ssl,
+            reload_each_execution,
+            sorted(k for k in kwargs if k.startswith("swf_in_")),
+        )
         return cls._execute_source(
             url=url,
+            verify_ssl=verify_ssl,
             reload_each_execution=reload_each_execution,
             **kwargs,
         )

@@ -70,6 +70,11 @@ Restart ComfyUI after installation or after Python changes. Browser-side updates
 
 Use `at execution` set to `reload` when the inner workflow file should be read fresh every run. Use `keep loaded` when the inner workflow should keep its in-memory state between runs.
 
+## Load from URL 
+
+Use the `Subworkflow (from URL)` node to load an inner workflow from a URL instead of a local file. The URL must point to a raw JSON workflow file. 
+Since the SSL certificate handling of ComfyUI's Python environment may not support all HTTPS endpoints, there is an option to ignore SSL errors when loading from URL. Use this option with caution and only for trusted sources.
+
 ## Use Cases
 
 - Reuse a prompt, sampler, or decode chain across multiple workflows.
@@ -101,6 +106,4 @@ Use `at execution` set to `reload` when the inner workflow file should be read f
 - [x] When linked nodes have a mismatch in expected input type and the value provided by Subworkflow Output, no error is given but passed to the next node. Implement type checking and error handling?
 
 ### Wish List
-- [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. 
-- [ ] Node with similar functionality as `Subworkflow` but where the inner workflow is loaded from a URL instead of a local file. This allows for sharing of inner workflows without sharing the entire outer workflow, and also allows for easier updating of inner workflows since they can be updated at the URL without needing to update the outer workflow.
-- [ ] 
+- [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. Check if this conflicts with unlinked inputs.
