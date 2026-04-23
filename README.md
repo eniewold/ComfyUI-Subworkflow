@@ -92,12 +92,12 @@ Note that there are no library dependencies outside of the standard Python envir
 
 **FEEDBACK WELCOME**: This is an initial release and work in progress. Expect bugs and breaking changes as I continue development. Please report any issues you encounter, especially those related to the known issues below, and share your use cases and feedback. Check below on how to get debug messages in the log files. 
 
-## Usage
+## Step-by-Step Usage
 
-1. Create an inner workflow and add one or more `Subworkflow Input` nodes where external values should enter.
+1. Adjust an (inner) workflow and add one or more `Subworkflow Input` nodes where external values should enter.
 2. Add one or more `Subworkflow Output` nodes where values should leave the inner workflow.
 3. Set meaningful `slot_name` values on each input and output boundary.
-4. Save the inner workflow (keep default folder `ComfyUI/user/default/workflows`).
+4. Save the inner workflow (to default folder `ComfyUI/user/default/workflows`).
 5. In another workflow, add a `Subworkflow` node and select the saved workflow file.
 6. Connect the generated input and output slots.
 
@@ -125,6 +125,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 - If the input of a corresponding `Subworkflow Input` on the `Subworkflow` node is not linked, the inner workflow will use the linked node of the `Subworkflow Input` node. This allows for optional inputs on the inner workflow.
 - The `Subworkflow` node loads the values from the selected inner workflow as is; including seed numbers. When `at execution` is set to `keep loaded`, the seed value will be updated by the inner workflow if it has a randomize-after-processing node linked to the `Subworkflow Input`. This allows for workflows that need to update their own input values, such as a seed that should randomize on every execution but also be exposed for linking to other nodes.
 - The `Subworkflow` node will keep the loaded file untouched, it will never save any changes to the inner workflow back to the file. 
+- A large portion of the source code has been created using AI assistance. Without this, the project would not have been possible for me at this time. I have done my best to review and test the generated code, but there may be edge cases or bugs that I have missed. Please report any issues you encounter.
 
 ## Known Issues
 
