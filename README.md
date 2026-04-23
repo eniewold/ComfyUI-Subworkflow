@@ -134,13 +134,9 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 - [ ] Green progress borders appear on more than one node when executing a inner workflow as part of a larger workflow. These borders should be limited to the currently executing node(s) outer workflow.
 - [ ] The order if inputs/outputs on the `Subworkflow` node is undetermined (probably based on the order of nodes in the inner workflow JSON). Consider adding an option to control this order.
 
-### Recently fixed
+### Version History
 
-- [x] `Subworkflow Output` can be placed between two nodes and still behave as a passthrough.
-- [x] `Subworkflow Input` transparency for nodes is handled for tested pass-through cases such as concatenate string.
-- [x] Inner workflow nodes with randomize-after-processing preserve updated values when `at execution` is set to `keep loaded`.
-- [x] `Subworkflow`, `Subworkflow Input`, and `Subworkflow Output` are all V3 nodes.
-- [x] When linked nodes have a mismatch in expected input type and the value provided by Subworkflow Output, no error is given but passed to the next node. Implement type checking and error handling?
+- 0.1.0 - Initial release of the four custom nodes and workflow loading and execution behavior.
 
 ### Wish List
 
