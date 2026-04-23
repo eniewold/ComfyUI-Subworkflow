@@ -2,5 +2,5 @@
 name = "comfyui-subworkflow"
 version = "0.1.0"
 description = "Use ComfyUI workflows as reusable subworkflows via Subworkflow Input, Subworkflow Output, and Subworkflow nodes"
-license = "MIT"
+license = "GPL-3.0-only"
 requires-python = ">=3.10"
