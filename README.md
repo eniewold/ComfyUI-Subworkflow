@@ -80,8 +80,6 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 
 ## Installation ![Important](https://img.shields.io/badge/BETA-yellow)
 
-**Note:** *this is an initial release and work in progress. Expect bugs and breaking changes as development continues. Feedback is welcome; include the inner and outer workflows in your report together with debug logs (see below).*
-
 Clone this repository into your ComfyUI custom nodes directory:
 
 ```bash
