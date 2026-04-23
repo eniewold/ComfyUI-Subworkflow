@@ -416,6 +416,7 @@ def _get_widget_values_from_saved_inputs(
 ) -> dict | None:
     result = {}
     widget_index = 0
+    consumed_widget_names = []
 
     for inp in node_inputs:
         widget_name = (inp.get("widget") or {}).get("name")
@@ -427,6 +428,7 @@ def _get_widget_values_from_saved_inputs(
 
         value = widgets_values[widget_index]
         has_control = _looks_like_control_after_generate(input_type, widgets_values, widget_index)
+        consumed_widget_names.append(widget_name)
 
         if widget_name not in linked_names:
             result[widget_name] = value
@@ -434,6 +436,45 @@ def _get_widget_values_from_saved_inputs(
         widget_index += 2 if has_control else 1
 
     if widget_index == 0:
+        return None
+
+    if widget_index < len(widgets_values):
+        class_specs = list(_iter_widget_specs(class_type, linked_names) or [])
+        remaining_specs = [
+            spec for spec in class_specs
+            if spec["name"] not in consumed_widget_names
+        ]
+        applied = []
+        for offset, spec in enumerate(remaining_specs):
+            index = widget_index + offset
+            if index >= len(widgets_values):
+                break
+            name = spec["name"]
+            applied.append(name)
+            if not spec["skip"]:
+                result[name] = widgets_values[index]
+
+        if widget_index + len(applied) >= len(widgets_values):
+            log.info(
+                "Subworkflow: node type %s saved input widget metadata is incomplete "
+                "(mapped prefix %d/%d widget value(s), names=%s); appended missing "
+                "widget names from class order=%s",
+                class_type,
+                widget_index,
+                len(widgets_values),
+                consumed_widget_names,
+                applied,
+            )
+            return result
+
+        log.info(
+            "Subworkflow: node type %s saved input widget metadata is incomplete "
+            "(mapped %d/%d widget value(s), names=%s); falling back to class widget order",
+            class_type,
+            widget_index,
+            len(widgets_values),
+            consumed_widget_names,
+        )
         return None
 
     return result
