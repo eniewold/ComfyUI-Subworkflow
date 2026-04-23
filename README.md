@@ -2,7 +2,20 @@
 
 ComfyUI-Subworkflow adds reusable workflow boundaries to ComfyUI. It lets one workflow expose named inputs and outputs, then lets another workflow execute it through a single `Subworkflow` node.
 
+![Example workflow used as inner workflow in Subworkflow node](./assets/readme_usage.png)
+
+## Subworkflow vs Subgraph
+
+*Subworkflows are fundametally different from subgraphs. Subworkflow offers a way to reuse entire workflows as nodes in other workflows, while subgraphs are a way to reuse a group of nodes within the same workflow.*
+
+In the example below you can see several workflows are used, and the image to video workflow is used several times:
+
+![Example workflow with several Subworkflow nodes with loaded inner workflows](./assets/readme_wf1.png)
+*Example workflow with several Subworkflow nodes with loaded inner workflows*
+
 ## Custom Nodes
+
+To control the workflow boundaries, this extension adds several custom nodes: `Subworkflow`, `Subworkflow Input`, and `Subworkflow Output`. These nodes work together to load and execute inner workflows while exposing their inputs and outputs on the outer workflow.
 
 ### Subworkflow
 
@@ -14,17 +27,34 @@ Inputs:
 
 Outputs are dynamic and are inferred from the inner workflow's `Subworkflow Output` nodes.
 
+### Subworkflow (from URL)
+
+Loads a workflow from a URL and expands it into the current prompt at execution time. The selected inner workflow determines the visible input and output slots on the node.
+
+Inputs:
+- `url`: absolute `http://` or `https://` URL that returns a workflow JSON file.
+- `at execution`: controls whether the inner workflow URL is reloaded on every execution or a loaded workflow instance is kept.
+- `verify ssl`: controls whether HTTPS certificate validation is enforced while loading from URL.
+
+Outputs are dynamic and are inferred from the inner workflow's `Subworkflow Output` nodes.
+
 ### Subworkflow Input
 
 Marks an input boundary inside a reusable workflow. The `slot_name` widget controls the label shown on the outer `Subworkflow` node. The value type is inferred from the connected node.
 
-When used directly in a normal workflow, `Subworkflow Input` must have its `value` input linked. It may be unlinked only when used as a boundary inside an inner workflow executed by `Subworkflow`.
+When used directly in a normal workflow, `Subworkflow Input` must have its `value` input linked for correct execution.
+That linked node is ignored when used as inner workflow inside `Subworkflow`, and the value is instead provided by the outer `Subworkflow` node input. 
+If no linked node is attached to the `Subworkflow` input, the linked node of the `Subworkflow Input` is used as fallback. This allows for optional inputs on the inner workflow.
+This structure allows for default values to be set on the input, and to use the same workflow as standalone or as inner workflow without changes.
 
 ### Subworkflow Output
 
 Marks an output boundary inside a reusable workflow. The `slot_name` widget controls the label shown on the outer `Subworkflow` node. The output type is inferred from the connected value.
 
 `Subworkflow Output` also behaves as a passthrough when other nodes inside the same inner workflow consume its output.
+
+![Example workflow with input and output nodes](./assets/readme_upscale.png)
+*Example workflow setup with (green) input and output nodes for usage as inner workflow.*
 
 ## Features
 
@@ -89,6 +119,8 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 - The `Subworkflow Output` node will not pass through values to it's output when it's used as inner workflow. When the workflow is executed standalone, it will pass through values transparently as expected. 
 - The `Subworkflow Input` will ignore any linked nodes to the input values when used as inner workflow. When the workflow is executed standalone, it will use the linked values transparently as expected.
 - If the input of a corresponding `Subworkflow Input` on the `Subworkflow` node is not linked, the inner workflow will use the linked node of the `Subworkflow Input` node. This allows for optional inputs on the inner workflow.
+- The `Subworkflow` node loads the values from the selected inner workflow as is; including seed numbers. When `at execution` is set to `keep loaded`, the seed value will be updated by the inner workflow if it has a randomize-after-processing node linked to the `Subworkflow Input`. This allows for workflows that need to update their own input values, such as a seed that should randomize on every execution but also be exposed for linking to other nodes.
+- The `Subworkflow` node will keep the loaded file untouched, it will never save any changes to the inner workflow back to the file. 
 
 ## Known Issues
 
