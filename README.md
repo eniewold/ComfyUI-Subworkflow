@@ -6,7 +6,7 @@ ComfyUI-Subworkflow adds reusable workflow boundaries to ComfyUI. It lets one wo
 
 ## Subworkflow vs Subgraph
 
-*Subworkflows are fundametally different from subgraphs. Subworkflow offers a way to reuse entire workflows as nodes in other workflows, while subgraphs are a way to reuse a group of nodes within the same workflow.*
+**Note:** *Subworkflows are fundametally different from subgraphs. Subworkflow offers a way to reuse entire workflows as nodes in other workflows, while subgraphs are a way to reuse a group of nodes within the same workflow.*
 
 In the example below you can see several workflows are used, and the image to video workflow is used several times:
 
