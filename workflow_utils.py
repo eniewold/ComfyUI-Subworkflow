@@ -12,8 +12,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from comfy_execution.graph_utils import GraphBuilder
+from .debug_utils import configure_logger
 
-log = logging.getLogger("ComfyUI-Subworkflow")
+log = configure_logger("ComfyUI-Subworkflow")
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
@@ -42,17 +43,17 @@ def list_workflow_files() -> list[str]:
                     rel = os.path.relpath(os.path.join(root, f), d)
                     files.append(rel.replace(os.sep, "/"))
     result = [PLACEHOLDER] + sorted(files)
-    log.info("Subworkflow: discovered %d workflow file(s) in %s", len(files), d)
+    log.debug("[Subworkflow] discovered %d workflow file(s) in %s", len(files), d)
     return result
 
 
 def load_workflow_file(filename: str) -> dict:
     path = os.path.join(_workflows_dir(), filename)
-    log.info("Subworkflow: loading workflow file %r from %s", filename, path)
+    log.debug("[Subworkflow] loading workflow file %r", filename)
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    log.info(
-        "Subworkflow: loaded workflow file %r format=%s top_level_keys=%s",
+    log.debug(
+        "[Subworkflow] loaded workflow file %r format=%s top_level_keys=%s",
         filename,
         "UI" if is_ui_format(data) else "API",
         sorted(data.keys())[:12],
@@ -61,21 +62,21 @@ def load_workflow_file(filename: str) -> dict:
 
 
 def load_workflow_url(url: str, verify_ssl: bool = True) -> dict:
-    log.info("Subworkflow URL loader: entered with url=%r verify_ssl=%s", url, verify_ssl)
+    log.debug("[Subworkflow] URL loader entered with url=%r verify_ssl=%s", url, verify_ssl)
     parsed = urllib.parse.urlparse(url)
-    log.info(
-        "Subworkflow URL loader: parsed scheme=%r netloc=%r path=%r query_present=%s",
+    log.debug(
+        "[Subworkflow] URL loader parsed scheme=%r netloc=%r path=%r query_present=%s",
         parsed.scheme,
         parsed.netloc,
         parsed.path,
         bool(parsed.query),
     )
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        log.warning("Subworkflow URL loader: rejecting invalid absolute URL %r", url)
+        log.warning("[Subworkflow] URL loader rejecting invalid absolute URL %r", url)
         raise ValueError("Workflow URL must be an absolute http:// or https:// URL.")
 
-    log.info(
-        "Subworkflow URL loader: opening URL %r timeout=%s max_bytes=%s verify_ssl=%s",
+    log.debug(
+        "[Subworkflow] URL loader opening URL %r timeout=%s max_bytes=%s verify_ssl=%s",
         url,
         URL_WORKFLOW_TIMEOUT,
         MAX_URL_WORKFLOW_BYTES,
@@ -87,25 +88,25 @@ def load_workflow_url(url: str, verify_ssl: bool = True) -> dict:
     )
     context = None if verify_ssl else ssl._create_unverified_context()
     if not verify_ssl:
-        log.warning("Subworkflow URL loader: SSL certificate verification disabled for %r", url)
+        log.warning("[Subworkflow] URL loader SSL certificate verification disabled for %r", url)
     try:
         with urllib.request.urlopen(request, timeout=URL_WORKFLOW_TIMEOUT, context=context) as response:
             status = getattr(response, "status", 200)
-            log.info(
-                "Subworkflow URL loader: response opened status=%s content_type=%r content_length=%r final_url=%r",
+            log.debug(
+                "[Subworkflow] URL loader response opened status=%s content_type=%r content_length=%r final_url=%r",
                 status,
                 response.headers.get("Content-Type"),
                 response.headers.get("Content-Length"),
                 response.geturl(),
             )
             if status < 200 or status >= 300:
-                log.warning("Subworkflow URL loader: rejecting HTTP status %s for %r", status, url)
+                log.warning("[Subworkflow] URL loader rejecting HTTP status %s for %r", status, url)
                 raise ValueError(f"Workflow URL returned HTTP {status}.")
 
             content_length = response.headers.get("Content-Length")
             if content_length and int(content_length) > MAX_URL_WORKFLOW_BYTES:
                 log.warning(
-                    "Subworkflow URL loader: rejecting oversized Content-Length=%s for %r",
+                    "[Subworkflow] URL loader rejecting oversized Content-Length=%s for %r",
                     content_length,
                     url,
                 )
@@ -115,25 +116,25 @@ def load_workflow_url(url: str, verify_ssl: bool = True) -> dict:
                 )
 
             raw = response.read(MAX_URL_WORKFLOW_BYTES + 1)
-            log.info("Subworkflow URL loader: read %d byte(s) from %r", len(raw), url)
+            log.debug("[Subworkflow] URL loader read %d byte(s) from %r", len(raw), url)
     except urllib.error.HTTPError as e:
-        log.warning("Subworkflow URL loader: HTTPError for %r: %s", url, e)
+        log.warning("[Subworkflow] URL loader HTTPError for %r: %s", url, e)
         raise ValueError(f"Workflow URL returned HTTP {e.code}.") from e
     except urllib.error.URLError as e:
-        log.warning("Subworkflow URL loader: URLError for %r: %s", url, e)
+        log.warning("[Subworkflow] URL loader URLError for %r: %s", url, e)
         raise ValueError(f"Failed to load workflow URL: {e.reason}") from e
 
     if len(raw) > MAX_URL_WORKFLOW_BYTES:
-        log.warning("Subworkflow URL loader: rejecting oversized body for %r", url)
+        log.warning("[Subworkflow] URL loader rejecting oversized body for %r", url)
         raise ValueError(
             f"Workflow URL response is too large "
             f"(limit {MAX_URL_WORKFLOW_BYTES} bytes)."
         )
 
-    log.info("Subworkflow URL loader: decoding JSON from %r", url)
+    log.debug("[Subworkflow] URL loader decoding JSON from %r", url)
     data = json.loads(raw.decode("utf-8"))
-    log.info(
-        "Subworkflow URL loader: loaded workflow URL %r format=%s top_level_keys=%s",
+    log.debug(
+        "[Subworkflow] loaded workflow URL %r format=%s top_level_keys=%s",
         url,
         "UI" if is_ui_format(data) else "API",
         sorted(data.keys())[:12],
@@ -167,10 +168,10 @@ def get_workflow_io(data: dict) -> tuple[list[dict], list[dict]]:
     """
     if is_ui_format(data):
         inputs, outputs = _get_workflow_io_ui(data)
-        log.info("Subworkflow: UI workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
+        log.debug("[Subworkflow] UI workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
         return inputs, outputs
     inputs, outputs = _get_workflow_io_api(data)
-    log.info("Subworkflow: API workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
+    log.debug("[Subworkflow] API workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
     return inputs, outputs
 
 
@@ -182,8 +183,8 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
         if ntype == SWF_SUBWORKFLOW_INPUT:
             slot_name = _boundary_slot_name(node, nid)
             slot_type = _boundary_output_type(node)
-            log.info(
-                "Subworkflow: found UI input boundary node=%s slot=%r type=%s",
+            log.debug(
+                "[Subworkflow] found UI input boundary node=%s slot=%r type=%s",
                 nid,
                 slot_name,
                 slot_type,
@@ -192,8 +193,8 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
         elif ntype == SWF_SUBWORKFLOW_OUTPUT:
             slot_name = _boundary_slot_name(node, nid)
             slot_type = _boundary_output_type(node) or _boundary_value_input_type(node)
-            log.info(
-                "Subworkflow: found UI output boundary node=%s slot=%r type=%s",
+            log.debug(
+                "[Subworkflow] found UI output boundary node=%s slot=%r type=%s",
                 nid,
                 slot_name,
                 slot_type,
@@ -235,10 +236,10 @@ def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
         ct = node.get("class_type", "")
         slot = node.get("inputs", {}).get("slot_name", nid)
         if ct == SWF_SUBWORKFLOW_INPUT:
-            log.info("Subworkflow: found API input boundary node=%s slot=%r type=*", nid, slot)
+            log.debug("[Subworkflow] found API input boundary node=%s slot=%r type=*", nid, slot)
             inputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
         elif ct == SWF_SUBWORKFLOW_OUTPUT:
-            log.info("Subworkflow: found API output boundary node=%s slot=%r type=*", nid, slot)
+            log.debug("[Subworkflow] found API output boundary node=%s slot=%r type=*", nid, slot)
             outputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
@@ -335,8 +336,8 @@ def _build_bypass_sources(nodes_list: list[dict], link_map: dict) -> dict[str, d
                 output_sources[output_index] = selected
 
         bypass_sources[node_id] = output_sources
-        log.info(
-            "Subworkflow: bypass node %s (%s) output mapping=%s",
+        log.debug(
+            "[Subworkflow] bypass node %s (%s) output mapping=%s",
             node_id,
             _node_class_type(node),
             output_sources,
@@ -455,8 +456,8 @@ def _get_widget_values_from_saved_inputs(
                 result[name] = widgets_values[index]
 
         if widget_index + len(applied) >= len(widgets_values):
-            log.info(
-                "Subworkflow: node type %s saved input widget metadata is incomplete "
+            log.debug(
+                "[Subworkflow] node type %s saved input widget metadata is incomplete "
                 "(mapped prefix %d/%d widget value(s), names=%s); appended missing "
                 "widget names from class order=%s",
                 class_type,
@@ -467,8 +468,8 @@ def _get_widget_values_from_saved_inputs(
             )
             return result
 
-        log.info(
-            "Subworkflow: node type %s saved input widget metadata is incomplete "
+        log.debug(
+            "[Subworkflow] node type %s saved input widget metadata is incomplete "
             "(mapped %d/%d widget value(s), names=%s); falling back to class widget order",
             class_type,
             widget_index,
@@ -496,7 +497,7 @@ def _get_widget_values(class_type: str, linked_names: set, widgets_values, node_
 
     if not isinstance(widgets_values, list):
         log.warning(
-            "Subworkflow: node type %s has unsupported widgets_values type %s",
+            "[Subworkflow] node type %s has unsupported widgets_values type %s",
             class_type,
             type(widgets_values).__name__,
         )
@@ -585,7 +586,7 @@ def _apply_control_after_generate_to_nodes(nodes_list: list, location: str) -> t
                 new_value = _next_controlled_value(old_value, spec["input_type"], spec["opts"], mode)
             except (TypeError, ValueError) as e:
                 log.warning(
-                    "Subworkflow: control-after-generate skipped %s node %s %s value=%r mode=%r: %s",
+                    "[Subworkflow] control-after-generate skipped %s node %s %s value=%r mode=%r: %s",
                     location,
                     node.get("id"),
                     spec["name"],
@@ -598,8 +599,8 @@ def _apply_control_after_generate_to_nodes(nodes_list: list, location: str) -> t
                 continue
             widgets_values[value_index] = new_value
             changed += 1
-            log.info(
-                "Subworkflow: control-after-generate updated %s node %s %s from %r to %r (%s)",
+            log.debug(
+                "[Subworkflow] control-after-generate updated %s node %s %s from %r to %r (%s)",
                 location,
                 node.get("id"),
                 spec["name"],
@@ -632,7 +633,7 @@ def apply_control_after_generate(data: dict) -> int:
         changed += sg_changed
 
     if changed:
-        log.info("Subworkflow: updated %d cached control-after-generate widget(s)", changed)
+        log.debug("[Subworkflow] updated %d cached control-after-generate widget(s)", changed)
     return changed
 
 
@@ -780,13 +781,13 @@ def validate_workflow_nodes_installed(data: dict):
         for sg in subgraph_defs.values():
             missing.extend(_missing_ui_nodes(sg.get("nodes") or [], subgraph_defs))
         if missing:
-            log.warning("Subworkflow: UI workflow has missing node types: %s", missing)
+            log.warning("[Subworkflow] UI workflow has missing node types: %s", missing)
             raise RuntimeError(_format_missing_node_error(missing, "UI"))
         return
 
     missing = _missing_api_nodes(data)
     if missing:
-        log.warning("Subworkflow: API workflow has missing node types: %s", missing)
+        log.warning("[Subworkflow] API workflow has missing node types: %s", missing)
         raise RuntimeError(_format_missing_node_error(missing, "API"))
 
 
@@ -835,10 +836,10 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
             continue
         ct  = _node_class_type(node)
         if not ct:
-            log.warning("SWF sg: node id=%s has no class_type, skipping", nid)
+            log.warning("[Subworkflow] subgraph node id=%s has no class_type, skipping", nid)
             continue
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
-            log.warning("SWF sg: node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
+            log.warning("[Subworkflow] subgraph node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
         sg_refs[nid] = graph.node(ct, id=f"{id_prefix}_{nid}")
 
@@ -850,20 +851,20 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
         if src_id in sg_bypass_sources:
             bypass_src = sg_bypass_sources[src_id].get(src_slot)
             if bypass_src is None:
-                log.warning("SWF sg: bypass node %s slot %d has no source", src_id, src_slot)
+                log.warning("[Subworkflow] subgraph bypass node %s slot %d has no source", src_id, src_slot)
                 return None
             if str(bypass_src[0]) == input_node_id:
                 return outer_values_by_slot.get(int(bypass_src[1]))
             ref = sg_refs.get(str(bypass_src[0]))
             if ref is None:
-                log.warning("SWF sg: bypass node %s source %s not in sg_refs", src_id, bypass_src[0])
+                log.warning("[Subworkflow] subgraph bypass node %s source %s not in sg_refs", src_id, bypass_src[0])
                 return None
             return ref.out(int(bypass_src[1]))
         if src_id == input_node_id:
             return outer_values_by_slot.get(src_slot)
         ref = sg_refs.get(src_id)
         if ref is None:
-            log.warning("SWF sg: link %s src node %s not in sg_refs", link_id, src_id)
+            log.warning("[Subworkflow] subgraph link %s src node %s not in sg_refs", link_id, src_id)
             return None
         return ref.out(src_slot)
 
@@ -892,7 +893,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
                         pass  # outer not wired — fall through to inner widget default
                     else:
                         linked_names.add(name)
-                        log.warning("SWF sg: node %s (%s) input %r UNRESOLVED", nid, ct, name)
+                        log.warning("[Subworkflow] subgraph node %s (%s) input %r unresolved", nid, ct, name)
 
         for wname, val in _get_widget_values(ct, linked_names, widgets_values, node_inputs).items():
             gb_node.set_input(wname, val)
@@ -902,19 +903,19 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
     for out_def in sg_outputs_def:
         link_ids = out_def.get("linkIds") or []
         if not link_ids:
-            log.warning("SWF sg: output %r has no linkIds", out_def.get("name"))
+            log.warning("[Subworkflow] subgraph output %r has no linkIds", out_def.get("name"))
             output_refs.append(None)
             continue
         src = sg_link_map.get(str(link_ids[0]))
         if src is None:
-            log.warning("SWF sg: output link %s not in sg_link_map", link_ids[0])
+            log.warning("[Subworkflow] subgraph output link %s not in sg_link_map", link_ids[0])
             output_refs.append(None)
             continue
         src_id, src_slot = str(src[0]), int(src[1])
         if src_id in sg_bypass_sources:
             bypass_src = sg_bypass_sources[src_id].get(src_slot)
             if bypass_src is None:
-                log.warning("SWF sg: output bypass node %s slot %d has no source", src_id, src_slot)
+                log.warning("[Subworkflow] subgraph output bypass node %s slot %d has no source", src_id, src_slot)
                 output_refs.append(None)
                 continue
             src_id, src_slot = str(bypass_src[0]), int(bypass_src[1])
@@ -923,7 +924,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
                 continue
         ref = sg_refs.get(src_id)
         if ref is None:
-            log.warning("SWF sg: output src node %s not in sg_refs", src_id)
+            log.warning("[Subworkflow] subgraph output src node %s not in sg_refs", src_id)
             output_refs.append(None)
             continue
         output_refs.append(ref.out(src_slot))
@@ -979,9 +980,9 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
         if outer_inputs.get(f"swf_in_{i}") is None and inp["node_id"] not in fi_fallback_src
     ]
     if missing:
-        log.warning("Subworkflow: missing UI inner input value(s) and fallback link(s): %s", missing)
-    log.info(
-        "Subworkflow: building UI expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
+        log.warning("[Subworkflow] missing UI inner input value(s) and fallback link(s): %s", missing)
+    log.debug(
+        "[Subworkflow] building UI expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
         len(inputs_info),
         len(outputs_info),
         len(nodes_list),
@@ -1005,7 +1006,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
         if src_node_id in bypass_sources:
             src = bypass_sources[src_node_id].get(src_slot)
             if src is None:
-                log.warning("SWF: bypass node %s slot %d has no source", src_node_id, src_slot)
+                log.warning("[Subworkflow] bypass node %s slot %d has no source", src_node_id, src_slot)
                 return None
             return resolve_link(src[0], src[1])
         if src_node_id in subgraph_outputs:
@@ -1013,7 +1014,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
             return refs[src_slot] if src_slot < len(refs) else None
         ref = node_refs.get(src_node_id)
         if ref is None:
-            log.warning("SWF: node %s slot %d unresolvable", src_node_id, src_slot)
+            log.warning("[Subworkflow] node %s slot %d unresolvable", src_node_id, src_slot)
         return ref.out(src_slot) if ref is not None else None
 
     import nodes as _comfy_nodes
@@ -1027,12 +1028,12 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
             continue
         ct = _node_class_type(node)
         if not ct:
-            log.warning("SWF: node id=%s has no resolvable class_type, skipping", nid)
+            log.warning("[Subworkflow] node id=%s has no resolvable class_type, skipping", nid)
             continue
         if ct in subgraph_defs:
             continue  # expanded separately below
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
-            log.warning("SWF: node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
+            log.warning("[Subworkflow] node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
         node_refs[nid] = graph.node(ct, id=nid)
 
@@ -1081,9 +1082,9 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
                     if resolved is not None:
                         gb_node.set_input(name, resolved)
                     else:
-                        log.warning("SWF: node %s (%s) input %r unresolved", nid, ct, name)
+                        log.warning("[Subworkflow] node %s (%s) input %r unresolved", nid, ct, name)
                 else:
-                    log.warning("SWF: node %s (%s) input %r: link %s not in link_map",
+                    log.warning("[Subworkflow] node %s (%s) input %r: link %s not in link_map",
                                 nid, ct, name, link_id)
 
         for wname, val in _get_widget_values(ct, linked_names, widgets_values, node_inputs).items():
@@ -1094,7 +1095,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     for out in outputs_info:
         src = dst_to_src.get(out["node_id"])
         if src is None:
-            log.warning("SWF: Subworkflow Output node=%s has no incoming link", out["node_id"])
+            log.warning("[Subworkflow] Subworkflow Output node=%s has no incoming link", out["node_id"])
         ref = resolve_link(src[0], src[1]) if src else None
         output_refs.append(ref)
 
@@ -1117,9 +1118,9 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
         if outer_inputs.get(f"swf_in_{i}") is None and fi_fallback_value.get(inp["node_id"]) is None
     ]
     if missing:
-        log.warning("Subworkflow: missing API inner input value(s) and fallback value(s): %s", missing)
-    log.info(
-        "Subworkflow: building API expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
+        log.warning("[Subworkflow] missing API inner input value(s) and fallback value(s): %s", missing)
+    log.debug(
+        "[Subworkflow] building API expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
         len(inputs_info),
         len(outputs_info),
         len([nid for nid in data if not str(nid).startswith("_")]),
@@ -1150,7 +1151,7 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
             return resolve_link(src) if isinstance(src, list) and len(src) == 2 else src
         ref = node_refs.get(src_id)
         if ref is None:
-            log.warning("SWF api: node %s slot %d unresolvable", src_id, src_slot)
+            log.warning("[Subworkflow] API node %s slot %d unresolvable", src_id, src_slot)
         return ref.out(src_slot) if ref is not None else None
 
     for nid, node in data.items():
@@ -1173,7 +1174,7 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
                 if resolved is not None:
                     gb_node.set_input(inp_name, resolved)
                 else:
-                    log.warning("SWF api: node %s input %r unresolved link %s", nid, inp_name, inp_val)
+                    log.warning("[Subworkflow] API node %s input %r unresolved link %s", nid, inp_name, inp_val)
             else:
                 gb_node.set_input(inp_name, inp_val)
 

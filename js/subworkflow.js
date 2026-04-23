@@ -35,10 +35,19 @@ const NODE_CONFIGS = {
 };
 const MAX_SLOTS = 8;
 const LOG = "[SWF]";
+const DEBUG = window.localStorage?.getItem("swf_debug") === "1";
 let workflowErrorDialog = null;
 let lastWorkflowErrorKey = null;
 
-console.log(LOG, "extension module loaded", {
+const debugLog = (...args) => {
+    if (DEBUG) console.log(LOG, ...args);
+};
+
+const debugWarn = (...args) => {
+    if (DEBUG) console.warn(LOG, ...args);
+};
+
+debugLog("extension module loaded", {
     configuredNodeTypes: Object.keys(NODE_CONFIGS),
 });
 
@@ -138,46 +147,46 @@ function showWorkflowError(config, value, message) {
 
 async function fetchWorkflowInfo(config, value, node) {
     if (!value) {
-        console.log(LOG, `fetchWorkflowInfo: skipping empty ${config.describe} value`);
+        debugLog(`fetchWorkflowInfo: skipping empty ${config.describe} value`);
         clearWorkflowError();
         return null;
     }
     const path = config.infoPath(value, node);
-    console.log(LOG, `fetchWorkflowInfo: fetching info for ${config.describe}`, {
+    debugLog(`fetchWorkflowInfo: fetching info for ${config.describe}`, {
         value,
         path,
     });
     try {
         const resp = await api.fetchApi(path);
-        console.log(LOG, `fetchWorkflowInfo: response status ${resp.status} for "${value}"`, {
+        debugLog(`fetchWorkflowInfo: response status ${resp.status} for "${value}"`, {
             url: resp.url,
             redirected: resp.redirected,
         });
         let data = null;
         try {
             data = await resp.json();
-            console.log(LOG, "fetchWorkflowInfo: response payload", data);
+            debugLog("fetchWorkflowInfo: response payload", data);
         } catch (e) {
-            console.warn(LOG, `fetchWorkflowInfo: failed to parse JSON response for "${value}"`, e);
+            debugWarn(`fetchWorkflowInfo: failed to parse JSON response for "${value}"`, e);
         }
         if (!resp.ok) {
-            console.warn(LOG, `fetchWorkflowInfo: HTTP ${resp.status} for "${value}"`);
+            debugWarn(`fetchWorkflowInfo: HTTP ${resp.status} for "${value}"`);
             showWorkflowError(config, value, data?.error || `HTTP ${resp.status} while loading ${config.describe}`);
             return null;
         }
         if (!data) {
             const message = `Invalid response while loading ${config.describe}: expected JSON`;
-            console.warn(LOG, `fetchWorkflowInfo: ${message}`);
+            debugWarn(`fetchWorkflowInfo: ${message}`);
             showWorkflowError(config, value, message);
             return null;
         }
         if (data.error) {
-            console.warn(LOG, `fetchWorkflowInfo: server error for "${value}":`, data.error);
+            debugWarn(`fetchWorkflowInfo: server error for "${value}":`, data.error);
             showWorkflowError(config, value, data.error);
             return null;
         }
         clearWorkflowError();
-        console.log(LOG, `fetchWorkflowInfo: got ${data.inputs.length} input(s), ${data.outputs.length} output(s) for "${value}"`);
+        debugLog(`fetchWorkflowInfo: got ${data.inputs.length} input(s), ${data.outputs.length} output(s) for "${value}"`);
         return data;
     } catch (e) {
         console.error(LOG, "fetchWorkflowInfo: fetch failed:", e);
@@ -187,29 +196,29 @@ async function fetchWorkflowInfo(config, value, node) {
 }
 
 function updateInputSlots(node, inputs) {
-    console.log(LOG, "updateInputSlots: before", slotSummary(node.inputs));
+    debugLog("updateInputSlots: before", slotSummary(node.inputs));
     if (node.inputs) {
         for (let i = node.inputs.length - 1; i >= 0; i--) {
             if (node.inputs[i].name?.startsWith("swf_in_")) node.removeInput(i);
         }
     }
     inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
-        console.log(LOG, `updateInputSlots: adding swf_in_${i}`, inp);
+        debugLog(`updateInputSlots: adding swf_in_${i}`, inp);
         node.addInput(`swf_in_${i}`, swfSlotType(inp), { label: inp.slot_name });
     });
-    console.log(LOG, "updateInputSlots: after", slotSummary(node.inputs));
+    debugLog("updateInputSlots: after", slotSummary(node.inputs));
 }
 
 function updateOutputSlots(node, outputs) {
     const needCount = Math.min(outputs.length, MAX_SLOTS);
-    console.log(LOG, "updateOutputSlots: before", slotSummary(node.outputs));
+    debugLog("updateOutputSlots: before", slotSummary(node.outputs));
 
     for (let i = (node.outputs || []).length - 1; i >= 0; i--) {
         const out = node.outputs[i];
         if (!/^out_\d+$/.test(out?.name)) continue;
         const idx = parseInt(out.name.slice(4));
         if (idx >= needCount) {
-            console.log(LOG, `updateOutputSlots: removing ${out.name} at index ${i}`);
+            debugLog(`updateOutputSlots: removing ${out.name} at index ${i}`);
             node.outputs.splice(i, 1);
         }
     }
@@ -217,7 +226,7 @@ function updateOutputSlots(node, outputs) {
     let n = 0;
     for (const out of (node.outputs || [])) {
         if (/^out_\d+$/.test(out.name) && n < needCount) {
-            console.log(LOG, `updateOutputSlots: updating ${out.name}`, outputs[n]);
+            debugLog(`updateOutputSlots: updating ${out.name}`, outputs[n]);
             out.label = outputs[n].slot_name;
             out.type = swfSlotType(outputs[n]);
             n++;
@@ -225,20 +234,20 @@ function updateOutputSlots(node, outputs) {
     }
 
     for (let i = n; i < needCount; i++) {
-        console.log(LOG, `updateOutputSlots: adding out_${i}`, outputs[i]);
+        debugLog(`updateOutputSlots: adding out_${i}`, outputs[i]);
         node.addOutput(`out_${i}`, swfSlotType(outputs[i]), { label: outputs[i].slot_name });
     }
 
-    console.log(LOG, `updateOutputSlots: ${needCount} slot(s), after`, slotSummary(node.outputs));
+    debugLog(`updateOutputSlots: ${needCount} slot(s), after`, slotSummary(node.outputs));
 }
 
 function applyWorkflowInfo(node, info) {
     if (!info) {
-        console.warn(LOG, "applyWorkflowInfo: no workflow info to apply", { nodeId: node.id });
+        debugWarn("applyWorkflowInfo: no workflow info to apply", { nodeId: node.id });
         return;
     }
     const { inputs = [], outputs = [] } = info;
-    console.log(LOG, `applyWorkflowInfo: ${inputs.length} input(s), ${outputs.length} output(s)`, {
+    debugLog(`applyWorkflowInfo: ${inputs.length} input(s), ${outputs.length} output(s)`, {
         nodeId: node.id,
         currentInputs: slotSummary(node.inputs),
         currentOutputs: slotSummary(node.outputs),
@@ -251,18 +260,18 @@ function applyWorkflowInfo(node, info) {
 
 function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
     if (!info) {
-        console.warn(LOG, "applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
+        debugWarn("applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
         return;
     }
     const { inputs = [], outputs = [] } = info;
-    console.log(LOG, `applyWorkflowInfoOnLoad: server=${inputs.length}in/${outputs.length}out, savedInputs=${savedInputCount}`, {
+    debugLog(`applyWorkflowInfoOnLoad: server=${inputs.length}in/${outputs.length}out, savedInputs=${savedInputCount}`, {
         nodeId: node.id,
         currentInputs: slotSummary(node.inputs),
         currentOutputs: slotSummary(node.outputs),
     });
 
     if (savedInputCount === inputs.length) {
-        console.log(LOG, "applyWorkflowInfoOnLoad: input count matches, updating labels only");
+        debugLog("applyWorkflowInfoOnLoad: input count matches, updating labels only");
         let idx = 0;
         for (const inp of (node.inputs || [])) {
             if (inp.name?.startsWith("swf_in_") && idx < inputs.length) {
@@ -272,14 +281,14 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
             }
         }
     } else {
-        console.log(LOG, `applyWorkflowInfoOnLoad: input count changed (${savedInputCount}->${inputs.length}), full refresh`);
+        debugLog(`applyWorkflowInfoOnLoad: input count changed (${savedInputCount}->${inputs.length}), full refresh`);
         updateInputSlots(node, inputs);
     }
 
     updateOutputSlots(node, outputs);
 
     if (savedSize) {
-        console.log(LOG, "applyWorkflowInfoOnLoad: restoring saved node size", savedSize);
+        debugLog("applyWorkflowInfoOnLoad: restoring saved node size", savedSize);
         node.setSize(savedSize);
     } else {
         setNodeSizeAtLeast(node, node.computeSize());
@@ -294,16 +303,16 @@ app.registerExtension({
         const config = NODE_CONFIGS[nodeData.name];
         if (!config) {
             if (String(nodeData.name || "").startsWith("SWF_")) {
-                console.log(LOG, "beforeRegisterNodeDef: ignoring unconfigured SWF node", nodeData.name);
+                debugLog("beforeRegisterNodeDef: ignoring unconfigured SWF node", nodeData.name);
             }
             return;
         }
 
-        console.log(LOG, "beforeRegisterNodeDef: patching", nodeData.name, nodeData);
+        debugLog("beforeRegisterNodeDef: patching", nodeData.name, nodeData);
 
         const origOnConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function (serializedNode) {
-            console.log(LOG, "onConfigure: restoring node from saved workflow", {
+            debugLog("onConfigure: restoring node from saved workflow", {
                 nodeType: nodeData.name,
                 nodeId: this.id,
                 serializedWidgetValues: serializedNode?.widgets_values,
@@ -315,10 +324,10 @@ app.registerExtension({
             const savedInputCount = (serializedNode.inputs || [])
                 .filter(i => i.name?.startsWith("swf_in_")).length;
             const savedSize = cloneSize(serializedNode.size);
-            console.log(LOG, `onConfigure: serialized node has ${savedInputCount} dynamic input(s)`);
+            debugLog(`onConfigure: serialized node has ${savedInputCount} dynamic input(s)`);
 
             if (origOnConfigure) origOnConfigure.call(this, serializedNode);
-            console.log(LOG, "onConfigure: after original handler", {
+            debugLog("onConfigure: after original handler", {
                 nodeType: nodeData.name,
                 nodeId: this.id,
                 widgets: (this.widgets || []).map(w => ({
@@ -331,7 +340,7 @@ app.registerExtension({
 
             const widget = this.widgets?.find(w => w.name === config.widgetName);
             const sourceValue = widget?.value;
-            console.log(LOG, `onConfigure: ${config.widgetName} widget value =`, sourceValue, {
+            debugLog(`onConfigure: ${config.widgetName} widget value =`, sourceValue, {
                 nodeType: nodeData.name,
                 nodeId: this.id,
                 widgets: (this.widgets || []).map(w => ({ name: w.name, value: w.value, type: w.type })),
@@ -345,14 +354,14 @@ app.registerExtension({
                 });
             } else {
                 clearWorkflowError();
-                console.warn(LOG, `onConfigure: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
+                debugWarn(`onConfigure: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
             }
         };
 
         const origOnWidgetChanged = nodeType.prototype.onWidgetChanged;
         nodeType.prototype.onWidgetChanged = function (name, value, oldValue, widget) {
             if (origOnWidgetChanged) origOnWidgetChanged.call(this, name, value, oldValue, widget);
-            console.log(LOG, "onWidgetChanged: observed widget change", {
+            debugLog("onWidgetChanged: observed widget change", {
                 nodeType: nodeData.name,
                 nodeId: this.id,
                 name,
@@ -363,7 +372,7 @@ app.registerExtension({
             });
             if (config.refreshWidgetNames.includes(name)) {
                 const sourceValue = this.widgets?.find(w => w.name === config.widgetName)?.value;
-                console.log(LOG, `onWidgetChanged: ${config.widgetName} changed from "${oldValue}" to "${value}"`, {
+                debugLog(`onWidgetChanged: ${config.widgetName} changed from "${oldValue}" to "${value}"`, {
                     nodeId: this.id,
                     inputs: slotSummary(this.inputs),
                     outputs: slotSummary(this.outputs),
@@ -377,7 +386,7 @@ app.registerExtension({
             if (origOnAdded) origOnAdded.call(this);
             const widget = this.widgets?.find(w => w.name === config.widgetName);
             const val = widget?.value;
-            console.log(LOG, `onAdded: node placed on canvas, ${config.widgetName} =`, val, {
+            debugLog(`onAdded: node placed on canvas, ${config.widgetName} =`, val, {
                 nodeType: nodeData.name,
                 nodeId: this.id,
                 widgets: (this.widgets || []).map(w => ({ name: w.name, value: w.value, type: w.type })),
@@ -388,7 +397,7 @@ app.registerExtension({
                 fetchWorkflowInfo(config, val, this).then(info => applyWorkflowInfo(this, info));
             } else {
                 clearWorkflowError();
-                console.warn(LOG, `onAdded: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
+                debugWarn(`onAdded: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
             }
         };
     },

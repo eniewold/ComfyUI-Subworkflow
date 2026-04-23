@@ -57,7 +57,7 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/eniewold/ComfyUI-Subworkflow.git
 ```
 
-Restart ComfyUI after installation or after Python changes. Browser-side updates may also require a hard refresh.
+Restart ComfyUI after installation or after Python changes. Browser-side updates also require a hard refresh.
 
 ## Usage
 
@@ -99,6 +99,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 - [ ] The order if inputs/outputs on the `Subworkflow` node is undetermined (probably based on the order of nodes in the inner workflow JSON). Consider adding an option to control this order.
 
 ### Recently fixed
+
 - [x] `Subworkflow Output` can be placed between two nodes and still behave as a passthrough.
 - [x] `Subworkflow Input` transparency for nodes is handled for tested pass-through cases such as concatenate string.
 - [x] Inner workflow nodes with randomize-after-processing preserve updated values when `at execution` is set to `keep loaded`.
@@ -106,4 +107,20 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 - [x] When linked nodes have a mismatch in expected input type and the value provided by Subworkflow Output, no error is given but passed to the next node. Implement type checking and error handling?
 
 ### Wish List
+
 - [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. Check if this conflicts with unlinked inputs.
+
+## Debug Logging
+
+*Backend debug logging* is controlled by the `COMFYUI_SUBWORKFLOW_DEBUG` environment variable.
+
+- When set to `true`, trace-style Python logs are enabled.
+- When unset or set to `false`, only normal release logs are shown.
+
+*Frontend debug logging* is separate and can be enabled in the browser console:
+
+- Enable it by setting the `swf_debug` item in `localStorage` to `"1"`:
+
+```js
+localStorage.setItem("swf_debug", "1")
+```

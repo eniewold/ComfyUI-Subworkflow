@@ -5,6 +5,7 @@ Subworkflow Input / Subworkflow Output nodes, and executes it as a subgraph expa
 import logging
 
 from comfy_api.latest import io
+from .debug_utils import configure_logger
 
 from .workflow_utils import (
     list_workflow_files,
@@ -16,7 +17,7 @@ from .workflow_utils import (
     MAX_SLOTS,
 )
 
-log = logging.getLogger("ComfyUI-Subworkflow")
+log = configure_logger("ComfyUI-Subworkflow")
 
 
 class BaseSubworkflow(io.ComfyNode):
@@ -37,7 +38,7 @@ class BaseSubworkflow(io.ComfyNode):
             if name.startswith("swf_in_") and value is None
         ]
         if missing_inputs:
-            log.info("Subworkflow: waiting for dynamic input(s) %s", missing_inputs)
+            log.debug("[Subworkflow] waiting for dynamic input(s) %s", missing_inputs)
         return missing_inputs
 
     @classmethod
@@ -66,17 +67,17 @@ class BaseSubworkflow(io.ComfyNode):
         label = cls._source_label(**kwargs)
         if reload_each_execution or cache_key not in cls._loaded_workflows:
             reason = "reload_each_execution enabled" if reload_each_execution else "cache miss"
-            log.info("Subworkflow: loading inner workflow %r (%s)", label, reason)
+            log.info("[Subworkflow] loading inner workflow %r (%s)", label, reason)
             cls._loaded_workflows[cache_key] = cls._load_source(**kwargs)
         else:
-            log.info("Subworkflow: reusing cached inner workflow %r", label)
+            log.debug("[Subworkflow] reusing cached inner workflow %r", label)
         return cls._loaded_workflows[cache_key]
 
     @classmethod
     def _execute_source(cls, reload_each_execution=True, **kwargs):
         label = cls._source_label(**kwargs)
-        log.info(
-            "Subworkflow: executing inner workflow %r (reload_each_execution=%s, dynamic_inputs=%s)",
+        log.debug(
+            "[Subworkflow] executing inner workflow %r (reload_each_execution=%s, dynamic_inputs=%s)",
             label,
             reload_each_execution,
             sorted(k for k in kwargs if k.startswith("swf_in_")),
@@ -171,7 +172,7 @@ class SubworkflowFromURL(BaseSubworkflow):
 
     @classmethod
     def define_schema(cls):
-        log.info("SubworkflowFromURL: define_schema called")
+        log.debug("[Subworkflow] SubworkflowFromURL define_schema called")
         return io.Schema(
             node_id="SWF_SubworkflowFromURL",
             display_name="Subworkflow (from URL)",
@@ -199,13 +200,13 @@ class SubworkflowFromURL(BaseSubworkflow):
 
     @classmethod
     def _source_label(cls, url: str, **kwargs) -> str:
-        log.info("SubworkflowFromURL: _source_label url=%r", url)
+        log.debug("[Subworkflow] SubworkflowFromURL _source_label url=%r", url)
         return url
 
     @classmethod
     def _source_cache_key(cls, url: str, verify_ssl: bool = True, **kwargs) -> str:
-        log.info(
-            "SubworkflowFromURL: _source_cache_key url=%r stripped=%r verify_ssl=%s",
+        log.debug(
+            "[Subworkflow] SubworkflowFromURL _source_cache_key url=%r stripped=%r verify_ssl=%s",
             url,
             url.strip(),
             verify_ssl,
@@ -214,21 +215,21 @@ class SubworkflowFromURL(BaseSubworkflow):
 
     @classmethod
     def _load_source(cls, url: str, verify_ssl: bool = True, **kwargs) -> dict:
-        log.info(
-            "SubworkflowFromURL: _load_source url=%r verify_ssl=%s kwargs_keys=%s",
+        log.debug(
+            "[Subworkflow] SubworkflowFromURL _load_source url=%r verify_ssl=%s kwargs_keys=%s",
             url,
             verify_ssl,
             sorted(kwargs.keys()),
         )
         if not url:
-            log.warning("SubworkflowFromURL: _load_source missing URL")
+            log.warning("[Subworkflow] SubworkflowFromURL _load_source missing URL")
             raise ValueError("No workflow URL specified.")
         return load_workflow_url(url.strip(), verify_ssl=bool(verify_ssl))
 
     @classmethod
     def execute(cls, url: str, verify_ssl=True, reload_each_execution=True, **kwargs):
-        log.info(
-            "SubworkflowFromURL: execute called url=%r verify_ssl=%s reload_each_execution=%s dynamic_inputs=%s",
+        log.debug(
+            "[Subworkflow] SubworkflowFromURL execute called url=%r verify_ssl=%s reload_each_execution=%s dynamic_inputs=%s",
             url,
             verify_ssl,
             reload_each_execution,
