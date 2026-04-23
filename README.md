@@ -1,4 +1,4 @@
-# ComfyUI-Subworkflow
+# ComfyUI-Subworkflow ![Important](https://img.shields.io/badge/BETA-yellow)
 
 ComfyUI-Subworkflow adds reusable workflow boundaries to ComfyUI. It lets one workflow expose named inputs and outputs, then lets another workflow execute it through a single `Subworkflow` node.
 
@@ -78,7 +78,7 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 
 `Subworkflow Input` and `Subworkflow Output` boundary names are read from their `slot_name` widget. For UI workflows this can come from either list-style or dictionary-style `widgets_values`; for API workflows it is read from the node's `inputs.slot_name`.
 
-## Installation ![Important](https://img.shields.io/badge/BETA-yellow)
+## Installation
 
 Clone this repository into your ComfyUI custom nodes directory:
 
