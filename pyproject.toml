@@ -1,6 +1,15 @@
 [project]
 name = "comfyui-subworkflow"
-version = "0.1.0"
+version = "1.0.0"
 description = "Use ComfyUI workflows as reusable subworkflows via Subworkflow Input, Subworkflow Output, and Subworkflow nodes"
-license = "GPL-3.0-only"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/eniewold/ComfyUI-Subworkflow"
+Documentation = "https://github.com/eniewold/ComfyUI-Subworkflow/blob/master/README.md"
+"Bug Tracker" = "https://github.com/eniewold/ComfyUI-Subworkflow/issues"
+
+[tool.comfy]
+PublisherId = "eniewold"
+DisplayName = "Subworkflow (reusable workflows)"

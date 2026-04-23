@@ -136,7 +136,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 
 ### Version History
 
-- 0.1.0 - Initial release of the four custom nodes and workflow loading and execution behavior.
+- 1.0.0 - Initial release of the four custom nodes and workflow loading and execution behavior.
 
 ### Wish List
 
