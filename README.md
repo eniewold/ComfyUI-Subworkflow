@@ -13,7 +13,7 @@ In the example below you can see several workflows are used, and the image to vi
 ![Example workflow with several Subworkflow nodes with loaded inner workflows](./assets/readme_wf1.png)
 *Example workflow with several Subworkflow nodes with loaded inner workflows*
 
-## Custom Nodes
+## Subworkflow custom nodes
 
 To control the workflow boundaries, this extension adds several custom nodes: `Subworkflow`, `Subworkflow Input`, and `Subworkflow Output`. These nodes work together to load and execute inner workflows while exposing their inputs and outputs on the outer workflow.
 
@@ -78,9 +78,9 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 
 `Subworkflow Input` and `Subworkflow Output` boundary names are read from their `slot_name` widget. For UI workflows this can come from either list-style or dictionary-style `widgets_values`; for API workflows it is read from the node's `inputs.slot_name`.
 
-## Installation
+## Installation ![Important](https://img.shields.io/badge/BETA-yellow)
 
-![Important](https://img.shields.io/badge/BETA-yellow) #### NOTE THAT IS INITIAL RELEASE AND WORK IN PROGRESS, EXPECT BUGS AND BREAKING CHANGES. SEE KNOWN ISSUES AND WISH LIST BELOW.
+**Note:** *this is an initial release and work in progress. Expect bugs and breaking changes as development continues. Feedback is welcome; include the inner and outer workflows in your report together with debug logs (see below).*
 
 Clone this repository into your ComfyUI custom nodes directory:
 
@@ -91,6 +91,8 @@ git clone https://github.com/eniewold/ComfyUI-Subworkflow.git
 
 Restart ComfyUI after installation or after Python changes. Browser-side updates also require a hard refresh. 
 Note that there are no library dependencies outside of the standard Python environment bundled with ComfyUI.
+
+**FEEDBACK WELCOME**: This is an initial release and work in progress. Expect bugs and breaking changes as I continue development. Please report any issues you encounter, especially those related to the known issues below, and share your use cases and feedback. Check below on how to get debug messages in the log files. 
 
 ## Usage
 
@@ -129,7 +131,6 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 ## Known Issues
 
 - [ ] The `Subworkflow` node progress can exceed 100%, sometimes reaching about 200%. Check with the upscale workflow example.
-- [ ] When no node is attached to an output of `Subworkflow`, an error occurs; it could be treated as an optional output.
 - [ ] Used paths with macro elements are not formatted currectly when used in inner workflow? (use Video Combine node with %date:yyyy-MM-dd%/WAN/Video)
 - [ ] Green progress borders appear on more than one node when executing a inner workflow as part of a larger workflow. These borders should be limited to the currently executing node(s) outer workflow.
 - [ ] The order if inputs/outputs on the `Subworkflow` node is undetermined (probably based on the order of nodes in the inner workflow JSON). Consider adding an option to control this order.
