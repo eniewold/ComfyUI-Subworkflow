@@ -80,6 +80,8 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 
 ## Installation
 
+![Important](https://img.shields.io/badge/BETA-yellow) #### NOTE THAT IS INITIAL RELEASE AND WORK IN PROGRESS, EXPECT BUGS AND BREAKING CHANGES. SEE KNOWN ISSUES AND WISH LIST BELOW.
+
 Clone this repository into your ComfyUI custom nodes directory:
 
 ```bash
@@ -87,7 +89,8 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/eniewold/ComfyUI-Subworkflow.git
 ```
 
-Restart ComfyUI after installation or after Python changes. Browser-side updates also require a hard refresh.
+Restart ComfyUI after installation or after Python changes. Browser-side updates also require a hard refresh. 
+Note that there are no library dependencies outside of the standard Python environment bundled with ComfyUI.
 
 ## Usage
 
@@ -115,6 +118,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 
 ## Notes
 
+- Developed and tested with ComfyUI version 0.18.2.
 - The `Subworkflow` node sets the input and output parameters when loading the inner workflow. This load is executed when the outer workflow is loaded. When linked nodes do not match the expected input types provided by `Subworkflow Output` and `Subworkflow Input` from inner workflow, the links are severed silently. 
 - The `Subworkflow Output` node will not pass through values to it's output when it's used as inner workflow. When the workflow is executed standalone, it will pass through values transparently as expected. 
 - The `Subworkflow Input` will ignore any linked nodes to the input values when used as inner workflow. When the workflow is executed standalone, it will use the linked values transparently as expected.
@@ -142,7 +146,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 
 - [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. Check if this conflicts with unlinked inputs.
 
-## Debug Logging
+### Debug Logging
 
 *Backend debug logging* is controlled by the `COMFYUI_SUBWORKFLOW_DEBUG` environment variable.
 
