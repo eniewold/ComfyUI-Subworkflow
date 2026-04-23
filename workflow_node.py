@@ -12,6 +12,7 @@ from .workflow_utils import (
     load_workflow_url,
     build_expansion,
     apply_control_after_generate,
+    validate_workflow_nodes_installed,
     MAX_SLOTS,
 )
 
@@ -81,6 +82,7 @@ class BaseSubworkflow(io.ComfyNode):
             sorted(k for k in kwargs if k.startswith("swf_in_")),
         )
         data = cls._get_workflow_data(reload_each_execution, **kwargs)
+        validate_workflow_nodes_installed(data)
 
         output_refs, graph = build_expansion(data, kwargs)
         if not reload_each_execution:

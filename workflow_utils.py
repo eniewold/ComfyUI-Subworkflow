@@ -691,6 +691,105 @@ def _build_subgraph_defs(data: dict) -> dict:
     return result
 
 
+def _format_missing_node_error(missing_nodes: list[dict], workflow_format: str) -> str:
+    lines = [
+        f"Inner {workflow_format} workflow uses node types that are not installed in this ComfyUI instance."
+    ]
+    for item in missing_nodes:
+        lines.append(
+            f"- node {item['node_id']}: {item['class_type']}"
+            + (f" ({item['title']})" if item.get("title") else "")
+        )
+    lines.append("Install the missing custom node package(s) and run the subworkflow again.")
+    return "\n".join(lines)
+
+
+def _missing_ui_nodes(nodes_list: list[dict], subgraph_defs: dict) -> list[dict]:
+    import nodes as _comfy_nodes
+
+    missing = []
+    seen = set()
+    for node in nodes_list:
+        node_id = str(node.get("id"))
+        class_type = _node_class_type(node)
+        if not class_type:
+            key = (node_id, "<unknown>")
+            if key not in seen:
+                seen.add(key)
+                missing.append({
+                    "node_id": node_id,
+                    "class_type": "<unknown>",
+                    "title": node.get("title"),
+                })
+            continue
+        if class_type in subgraph_defs or class_type in _comfy_nodes.NODE_CLASS_MAPPINGS:
+            continue
+        key = (node_id, class_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        missing.append({
+            "node_id": node_id,
+            "class_type": class_type,
+            "title": node.get("title"),
+        })
+    return missing
+
+
+def _missing_api_nodes(data: dict) -> list[dict]:
+    import nodes as _comfy_nodes
+
+    missing = []
+    seen = set()
+    for node_id, node in data.items():
+        if str(node_id).startswith("_"):
+            continue
+        class_type = node.get("class_type")
+        if not class_type:
+            key = (str(node_id), "<unknown>")
+            if key not in seen:
+                seen.add(key)
+                missing.append({
+                    "node_id": str(node_id),
+                    "class_type": "<unknown>",
+                    "title": node.get("_meta", {}).get("title") if isinstance(node.get("_meta"), dict) else None,
+                })
+            continue
+        if class_type in _comfy_nodes.NODE_CLASS_MAPPINGS:
+            continue
+        key = (str(node_id), class_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        missing.append({
+            "node_id": str(node_id),
+            "class_type": class_type,
+            "title": node.get("_meta", {}).get("title") if isinstance(node.get("_meta"), dict) else None,
+        })
+    return missing
+
+
+def validate_workflow_nodes_installed(data: dict):
+    """
+    Raise an execution-time error if the inner workflow references node types that
+    are not installed in the current ComfyUI instance.
+    """
+    if is_ui_format(data):
+        subgraph_defs = _build_subgraph_defs(data)
+        missing = _missing_ui_nodes(data.get("nodes", []), subgraph_defs)
+        for sg in subgraph_defs.values():
+            missing.extend(_missing_ui_nodes(sg.get("nodes") or [], subgraph_defs))
+        if missing:
+            log.warning("Subworkflow: UI workflow has missing node types: %s", missing)
+            raise RuntimeError(_format_missing_node_error(missing, "UI"))
+        return
+
+    missing = _missing_api_nodes(data)
+    if missing:
+        log.warning("Subworkflow: API workflow has missing node types: %s", missing)
+        raise RuntimeError(_format_missing_node_error(missing, "API"))
+
+
 def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
                      outer_resolve_fn, graph, id_prefix: str) -> list:
     """
