@@ -117,6 +117,14 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 - When set to `true`, trace-style Python logs are enabled.
 - When unset or set to `false`, only normal release logs are shown.
 
+When using ComfyUI portable, adjust the launch script and add the following after 'setlocal' line:
+```bash
+...
+setlocal
+set COMFYUI_SUBWORKFLOW_DEBUG=1
+...
+```
+
 *Frontend debug logging* is separate and can be enabled in the browser console:
 
 - Enable it by setting the `swf_debug` item in `localStorage` to `"1"`:
