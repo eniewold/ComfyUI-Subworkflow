@@ -64,7 +64,7 @@ Restart ComfyUI after installation or after Python changes. Browser-side updates
 1. Create an inner workflow and add one or more `Subworkflow Input` nodes where external values should enter.
 2. Add one or more `Subworkflow Output` nodes where values should leave the inner workflow.
 3. Set meaningful `slot_name` values on each input and output boundary.
-4. Save the inner workflow under `ComfyUI/user/default/workflows`.
+4. Save the inner workflow (keep default folder `ComfyUI/user/default/workflows`).
 5. In another workflow, add a `Subworkflow` node and select the saved workflow file.
 6. Connect the generated input and output slots.
 
@@ -83,6 +83,7 @@ Use `at execution` set to `reload` when the inner workflow file should be read f
 - The `Subworkflow` node sets the input and output parameters when loading the inner workflow. This load is executed when the outer workflow is loaded. When linked nodes do not match the expected input types provided by `Subworkflow Output` and `Subworkflow Input` from inner workflow, the links are severed silently. 
 - The `Subworkflow Output` node will not pass through values to it's output when it's used as inner workflow. When the workflow is executed standalone, it will pass through values transparently as expected. 
 - The `Subworkflow Input` will ignore any linked nodes to the input values when used as inner workflow. When the workflow is executed standalone, it will use the linked values transparently as expected.
+- If the input of a corresponding `Subworkflow Input` on the `Subworkflow` node is not linked, the inner workflow will use the linked node of the `Subworkflow Input` node. This allows for optional inputs on the inner workflow.
 
 ## Known Issues
 
@@ -101,3 +102,5 @@ Use `at execution` set to `reload` when the inner workflow file should be read f
 
 ### Wish List
 - [ ] For each Subworkflow Input node, add an input field in the Subworkflow node for directly setting its value. This also allows for linking of nodes with same type. Similar as subgraphs. 
+- [ ] Node with similar functionality as `Subworkflow` but where the inner workflow is loaded from a URL instead of a local file. This allows for sharing of inner workflows without sharing the entire outer workflow, and also allows for easier updating of inner workflows since they can be updated at the URL without needing to update the outer workflow.
+- [ ] 

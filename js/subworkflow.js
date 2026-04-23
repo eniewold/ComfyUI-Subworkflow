@@ -1,19 +1,34 @@
 /**
- * Frontend extension for the Subworkflow node.
+ * Frontend extension for the Subworkflow nodes.
  *
- * When the "workflow" widget changes, this extension queries the backend for
- * the inner workflow's Subworkflow Input / Subworkflow Output info and dynamically
+ * When the source widget changes, this extension queries the backend for the
+ * inner workflow's Subworkflow Input / Subworkflow Output info and dynamically
  * updates the node's input and output slots.
  *
- * Input slots are named  swf_in_0, swf_in_1, …  (matching the Python backend).
- * Output slots are named out_0, out_1, …         (matching RETURN_NAMES).
+ * Input slots are named swf_in_0, swf_in_1, ... (matching the Python backend).
+ * Output slots are named out_0, out_1, ...      (matching RETURN_NAMES).
  * Both use display labels from the inner workflow's slot_name values.
  */
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const NODE_TYPE = "SWF_Subworkflow";
+const NODE_CONFIGS = {
+    SWF_Subworkflow: {
+        widgetName: "workflow",
+        describe: "workflow",
+        infoPath(value) {
+            return `/subworkflow/info?source=file&workflow=${encodeURIComponent(value)}`;
+        },
+    },
+    SWF_SubworkflowFromURL: {
+        widgetName: "url",
+        describe: "workflow URL",
+        infoPath(value) {
+            return `/subworkflow/info?source=url&url=${encodeURIComponent(value)}`;
+        },
+    },
+};
 const MAX_SLOTS = 8;
 const LOG = "[SWF]";
 
@@ -45,32 +60,26 @@ function setNodeSizeAtLeast(node, minSize) {
     ]);
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function fetchWorkflowInfo(workflowName) {
-    if (!workflowName) {
-        console.log(LOG, "fetchWorkflowInfo: skipping empty workflow value");
+async function fetchWorkflowInfo(config, value) {
+    if (!value) {
+        console.log(LOG, `fetchWorkflowInfo: skipping empty ${config.describe} value`);
         return null;
     }
-    console.log(LOG, "fetchWorkflowInfo: fetching info for", workflowName);
+    console.log(LOG, `fetchWorkflowInfo: fetching info for ${config.describe}`, value);
     try {
-        const resp = await api.fetchApi(
-            `/subworkflow/info?workflow=${encodeURIComponent(workflowName)}`
-        );
-        console.log(LOG, `fetchWorkflowInfo: response status ${resp.status} for "${workflowName}"`);
+        const resp = await api.fetchApi(config.infoPath(value));
+        console.log(LOG, `fetchWorkflowInfo: response status ${resp.status} for "${value}"`);
         if (!resp.ok) {
-            console.warn(LOG, `fetchWorkflowInfo: HTTP ${resp.status} for "${workflowName}"`);
+            console.warn(LOG, `fetchWorkflowInfo: HTTP ${resp.status} for "${value}"`);
             return null;
         }
         const data = await resp.json();
         console.log(LOG, "fetchWorkflowInfo: response payload", data);
         if (data.error) {
-            console.warn(LOG, `fetchWorkflowInfo: server error for "${workflowName}":`, data.error);
+            console.warn(LOG, `fetchWorkflowInfo: server error for "${value}":`, data.error);
             return null;
         }
-        console.log(LOG, `fetchWorkflowInfo: got ${data.inputs.length} input(s), ${data.outputs.length} output(s) for "${workflowName}"`);
+        console.log(LOG, `fetchWorkflowInfo: got ${data.inputs.length} input(s), ${data.outputs.length} output(s) for "${value}"`);
         return data;
     } catch (e) {
         console.error(LOG, "fetchWorkflowInfo: fetch failed:", e);
@@ -78,11 +87,6 @@ async function fetchWorkflowInfo(workflowName) {
     }
 }
 
-/**
- * Update the dynamic input slots (swf_in_*) on a node.
- * Always does a full remove-and-add since input slots don't suffer from the
- * re-addition problem that output slots do.
- */
 function updateInputSlots(node, inputs) {
     console.log(LOG, "updateInputSlots: before", slotSummary(node.inputs));
     if (node.inputs) {
@@ -97,19 +101,10 @@ function updateInputSlots(node, inputs) {
     console.log(LOG, "updateInputSlots: after", slotSummary(node.inputs));
 }
 
-/**
- * Update the dynamic output slots (out_*) on a node.
- *
- * We splice node.outputs directly instead of calling removeOutput().
- * removeOutput() calls graph.connectionChange() which triggers ComfyUI's
- * node-sync machinery and immediately re-adds all RETURN_TYPES slots.
- * Direct splice bypasses that callback entirely.
- */
 function updateOutputSlots(node, outputs) {
     const needCount = Math.min(outputs.length, MAX_SLOTS);
     console.log(LOG, "updateOutputSlots: before", slotSummary(node.outputs));
 
-    // Remove excess out_* slots from the end, bypassing removeOutput().
     for (let i = (node.outputs || []).length - 1; i >= 0; i--) {
         const out = node.outputs[i];
         if (!/^out_\d+$/.test(out?.name)) continue;
@@ -120,7 +115,6 @@ function updateOutputSlots(node, outputs) {
         }
     }
 
-    // Update labels on surviving slots.
     let n = 0;
     for (const out of (node.outputs || [])) {
         if (/^out_\d+$/.test(out.name) && n < needCount) {
@@ -131,7 +125,6 @@ function updateOutputSlots(node, outputs) {
         }
     }
 
-    // Add any slots still missing (addOutput is safe — no connectionChange).
     for (let i = n; i < needCount; i++) {
         console.log(LOG, `updateOutputSlots: adding out_${i}`, outputs[i]);
         node.addOutput(`out_${i}`, swfSlotType(outputs[i]), { label: outputs[i].slot_name });
@@ -140,11 +133,6 @@ function updateOutputSlots(node, outputs) {
     console.log(LOG, `updateOutputSlots: ${needCount} slot(s), after`, slotSummary(node.outputs));
 }
 
-// ---------------------------------------------------------------------------
-// Public slot-update entry points
-// ---------------------------------------------------------------------------
-
-/** Full refresh — used when user picks a new workflow via the combo. */
 function applyWorkflowInfo(node, info) {
     if (!info) {
         console.warn(LOG, "applyWorkflowInfo: no workflow info to apply", { nodeId: node.id });
@@ -162,13 +150,6 @@ function applyWorkflowInfo(node, info) {
     app.graph.setDirtyCanvas(true, true);
 }
 
-/**
- * Load restore — used from onConfigure.
- * For inputs: full refresh is safe (LiteGraph restores input links after
- *   onConfigure, so adding the slot before the link is restored is fine).
- * For outputs: updateOutputSlots splices the array directly, preserving any
- *   already-restored links on out_0 while removing the Python-padded extras.
- */
 function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
     if (!info) {
         console.warn(LOG, "applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
@@ -181,7 +162,6 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
         currentOutputs: slotSummary(node.outputs),
     });
 
-    // Inputs
     if (savedInputCount === inputs.length) {
         console.log(LOG, "applyWorkflowInfoOnLoad: input count matches, updating labels only");
         let idx = 0;
@@ -193,11 +173,10 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
             }
         }
     } else {
-        console.log(LOG, `applyWorkflowInfoOnLoad: input count changed (${savedInputCount}→${inputs.length}), full refresh`);
+        console.log(LOG, `applyWorkflowInfoOnLoad: input count changed (${savedInputCount}->${inputs.length}), full refresh`);
         updateInputSlots(node, inputs);
     }
 
-    // Outputs — splice excess slots directly (avoids removeOutput callback).
     updateOutputSlots(node, outputs);
 
     if (savedSize) {
@@ -209,24 +188,19 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
     app.graph.setDirtyCanvas(true, true);
 }
 
-// ---------------------------------------------------------------------------
-// Extension registration
-// ---------------------------------------------------------------------------
-
 app.registerExtension({
     name: "SWF.Subworkflow",
 
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== NODE_TYPE) return;
+        const config = NODE_CONFIGS[nodeData.name];
+        if (!config) return;
 
-        console.log(LOG, "beforeRegisterNodeDef: patching", NODE_TYPE, nodeData);
+        console.log(LOG, "beforeRegisterNodeDef: patching", nodeData.name, nodeData);
 
-        // -- onConfigure: called when a saved workflow is loaded ---------------
         const origOnConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function (serializedNode) {
             console.log(LOG, "onConfigure: restoring node from saved workflow");
 
-            // Read saved dynamic input count BEFORE origOnConfigure may change things.
             const savedInputCount = (serializedNode.inputs || [])
                 .filter(i => i.name?.startsWith("swf_in_")).length;
             const savedSize = cloneSize(serializedNode.size);
@@ -234,54 +208,52 @@ app.registerExtension({
 
             if (origOnConfigure) origOnConfigure.call(this, serializedNode);
 
-            const widget = this.widgets?.find(w => w.name === "workflow");
-            const workflowName = widget?.value;
-            console.log(LOG, "onConfigure: workflow widget value =", workflowName, {
+            const widget = this.widgets?.find(w => w.name === config.widgetName);
+            const sourceValue = widget?.value;
+            console.log(LOG, `onConfigure: ${config.widgetName} widget value =`, sourceValue, {
                 nodeId: this.id,
                 widgets: (this.widgets || []).map(w => ({ name: w.name, value: w.value, type: w.type })),
                 inputs: slotSummary(this.inputs),
                 outputs: slotSummary(this.outputs),
             });
 
-            if (workflowName) {
-                fetchWorkflowInfo(workflowName).then(info => {
+            if (sourceValue) {
+                fetchWorkflowInfo(config, sourceValue).then(info => {
                     applyWorkflowInfoOnLoad(this, info, savedInputCount, savedSize);
                 });
             } else {
-                console.warn(LOG, "onConfigure: workflow widget not found or empty", { nodeId: this.id });
+                console.warn(LOG, `onConfigure: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
             }
         };
 
-        // -- onWidgetChanged: called when the combo changes --------------------
         const origOnWidgetChanged = nodeType.prototype.onWidgetChanged;
         nodeType.prototype.onWidgetChanged = function (name, value, oldValue, widget) {
             if (origOnWidgetChanged) origOnWidgetChanged.call(this, name, value, oldValue, widget);
-            if (name === "workflow") {
-                console.log(LOG, `onWidgetChanged: workflow changed from "${oldValue}" to "${value}"`, {
+            if (name === config.widgetName) {
+                console.log(LOG, `onWidgetChanged: ${config.widgetName} changed from "${oldValue}" to "${value}"`, {
                     nodeId: this.id,
                     inputs: slotSummary(this.inputs),
                     outputs: slotSummary(this.outputs),
                 });
-                fetchWorkflowInfo(value).then(info => applyWorkflowInfo(this, info));
+                fetchWorkflowInfo(config, value).then(info => applyWorkflowInfo(this, info));
             }
         };
 
-        // -- onAdded: called when the node is first dragged onto the canvas ----
         const origOnAdded = nodeType.prototype.onAdded;
         nodeType.prototype.onAdded = function () {
             if (origOnAdded) origOnAdded.call(this);
-            const widget = this.widgets?.find(w => w.name === "workflow");
+            const widget = this.widgets?.find(w => w.name === config.widgetName);
             const val = widget?.value;
-            console.log(LOG, "onAdded: node placed on canvas, workflow =", val, {
+            console.log(LOG, `onAdded: node placed on canvas, ${config.widgetName} =`, val, {
                 nodeId: this.id,
                 widgets: (this.widgets || []).map(w => ({ name: w.name, value: w.value, type: w.type })),
                 inputs: slotSummary(this.inputs),
                 outputs: slotSummary(this.outputs),
             });
             if (val) {
-                fetchWorkflowInfo(val).then(info => applyWorkflowInfo(this, info));
+                fetchWorkflowInfo(config, val).then(info => applyWorkflowInfo(this, info));
             } else {
-                console.warn(LOG, "onAdded: workflow widget not found or empty", { nodeId: this.id });
+                console.warn(LOG, `onAdded: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
             }
         };
     },

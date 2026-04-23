@@ -7,6 +7,9 @@ import logging
 import os
 import random
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from comfy_execution.graph_utils import GraphBuilder
 
 log = logging.getLogger("ComfyUI-Subworkflow")
@@ -19,6 +22,8 @@ SWF_SUBWORKFLOW_INPUT = "SWF_SubworkflowInput"
 SWF_SUBWORKFLOW_OUTPUT = "SWF_SubworkflowOutput"
 MAX_SLOTS = 8
 PLACEHOLDER = ""
+MAX_URL_WORKFLOW_BYTES = 50 * 1024 * 1024
+URL_WORKFLOW_TIMEOUT = 20
 
 
 def _workflows_dir() -> str:
@@ -40,7 +45,7 @@ def list_workflow_files() -> list[str]:
     return result
 
 
-def load_workflow(filename: str) -> dict:
+def load_workflow_file(filename: str) -> dict:
     path = os.path.join(_workflows_dir(), filename)
     log.info("Subworkflow: loading workflow file %r from %s", filename, path)
     with open(path, encoding="utf-8") as f:
@@ -52,6 +57,55 @@ def load_workflow(filename: str) -> dict:
         sorted(data.keys())[:12],
     )
     return data
+
+
+def load_workflow_url(url: str) -> dict:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Workflow URL must be an absolute http:// or https:// URL.")
+
+    log.info("Subworkflow: loading workflow URL %r", url)
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ComfyUI-Subworkflow/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=URL_WORKFLOW_TIMEOUT) as response:
+            status = getattr(response, "status", 200)
+            if status < 200 or status >= 300:
+                raise ValueError(f"Workflow URL returned HTTP {status}.")
+
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > MAX_URL_WORKFLOW_BYTES:
+                raise ValueError(
+                    f"Workflow URL response is too large "
+                    f"({content_length} bytes; limit {MAX_URL_WORKFLOW_BYTES})."
+                )
+
+            raw = response.read(MAX_URL_WORKFLOW_BYTES + 1)
+    except urllib.error.HTTPError as e:
+        raise ValueError(f"Workflow URL returned HTTP {e.code}.") from e
+    except urllib.error.URLError as e:
+        raise ValueError(f"Failed to load workflow URL: {e.reason}") from e
+
+    if len(raw) > MAX_URL_WORKFLOW_BYTES:
+        raise ValueError(
+            f"Workflow URL response is too large "
+            f"(limit {MAX_URL_WORKFLOW_BYTES} bytes)."
+        )
+
+    data = json.loads(raw.decode("utf-8"))
+    log.info(
+        "Subworkflow: loaded workflow URL %r format=%s top_level_keys=%s",
+        url,
+        "UI" if is_ui_format(data) else "API",
+        sorted(data.keys())[:12],
+    )
+    return data
+
+
+def load_workflow(filename: str) -> dict:
+    return load_workflow_file(filename)
 
 
 def is_ui_format(data: dict) -> bool:
@@ -709,6 +763,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     parsed_links = [_parse_link(lnk) for lnk in links_list]
     link_map = {lid: (src, ss) for lid, src, ss, _, _ in parsed_links}
     bypass_sources = _build_bypass_sources(nodes_list, link_map)
+    nodes_by_id = {str(node.get("id")): node for node in nodes_list}
     dst_to_src: dict[str, tuple[str, int]] = {}
     for _, src, ss, dst, _ in parsed_links:
         dst_to_src.setdefault(dst, (src, ss))
@@ -722,13 +777,32 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     fo_src = {out["node_id"]: dst_to_src.get(out["node_id"]) for out in outputs_info}
 
     fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
+    fi_fallback_src: dict[str, tuple[str, int]] = {}
+    for inp in inputs_info:
+        node = nodes_by_id.get(inp["node_id"]) or {}
+        node_inputs = node.get("inputs") or []
+        fallback_link = None
+        for node_input in node_inputs:
+            if node_input.get("name") == "value" and node_input.get("link") is not None:
+                fallback_link = node_input.get("link")
+                break
+        if fallback_link is None:
+            for node_input in node_inputs:
+                if node_input.get("link") is not None:
+                    fallback_link = node_input.get("link")
+                    break
+        if fallback_link is not None:
+            src = link_map.get(str(fallback_link))
+            if src is not None:
+                fi_fallback_src[inp["node_id"]] = src
+
     missing = [
         f"swf_in_{i}:{inp['slot_name']}({inp['node_id']})"
         for i, inp in enumerate(inputs_info)
-        if outer_inputs.get(f"swf_in_{i}") is None
+        if outer_inputs.get(f"swf_in_{i}") is None and inp["node_id"] not in fi_fallback_src
     ]
     if missing:
-        log.warning("Subworkflow: missing UI inner input value(s): %s", missing)
+        log.warning("Subworkflow: missing UI inner input value(s) and fallback link(s): %s", missing)
     log.info(
         "Subworkflow: building UI expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
         len(inputs_info),
@@ -743,7 +817,11 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
 
     def resolve_link(src_node_id: str, src_slot: int):
         if src_node_id in fi_value:
-            return fi_value[src_node_id]
+            value = fi_value[src_node_id]
+            if value is not None:
+                return value
+            src = fi_fallback_src.get(src_node_id)
+            return resolve_link(src[0], src[1]) if src else None
         if src_node_id in fo_src:
             src = fo_src[src_node_id]
             return resolve_link(src[0], src[1]) if src else None
@@ -851,13 +929,18 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
     _validate_outer_runtime_inputs(inputs_info, outer_inputs, "API")
 
     fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
+    fi_fallback_value = {
+        inp["node_id"]: data[inp["node_id"]].get("inputs", {}).get("value")
+        for inp in inputs_info
+        if inp["node_id"] in data
+    }
     missing = [
         f"swf_in_{i}:{inp['slot_name']}({inp['node_id']})"
         for i, inp in enumerate(inputs_info)
-        if outer_inputs.get(f"swf_in_{i}") is None
+        if outer_inputs.get(f"swf_in_{i}") is None and fi_fallback_value.get(inp["node_id"]) is None
     ]
     if missing:
-        log.warning("Subworkflow: missing API inner input value(s): %s", missing)
+        log.warning("Subworkflow: missing API inner input value(s) and fallback value(s): %s", missing)
     log.info(
         "Subworkflow: building API expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
         len(inputs_info),
@@ -878,7 +961,13 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
         src_id   = str(link_val[0])
         src_slot = int(link_val[1])
         if src_id in fi_value:
-            return fi_value[src_id]
+            value = fi_value[src_id]
+            if value is not None:
+                return value
+            fallback = fi_fallback_value.get(src_id)
+            if isinstance(fallback, list) and len(fallback) == 2 and isinstance(fallback[0], (str, int)):
+                return resolve_link(fallback)
+            return fallback
         if src_id in fo_src:
             src = fo_src[src_id]
             return resolve_link(src) if isinstance(src, list) and len(src) == 2 else src
