@@ -2,7 +2,7 @@
 
 ComfyUI-Subworkflow adds reusable workflow boundaries to ComfyUI. It lets one workflow expose named inputs and outputs, then lets another workflow execute it through a single `Subworkflow` node.
 
-![Example workflow used as inner workflow in Subworkflow node](./assets/readme_usage2.png)
+![Example workflow used as inner workflow in Subworkflow node](./assets/readme_usage.png)
 
 ## Subworkflow custom nodes
 
