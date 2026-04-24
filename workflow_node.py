@@ -12,6 +12,7 @@ from .workflow_utils import (
     load_workflow_file,
     load_workflow_url,
     build_expansion,
+    build_modifier_source_expansion,
     apply_control_after_generate,
     validate_workflow_nodes_installed,
     MAX_SLOTS,
@@ -86,11 +87,23 @@ class BaseSubworkflow(io.ComfyNode):
         validate_workflow_nodes_installed(data)
 
         output_refs, graph = build_expansion(data, kwargs)
+        return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)
+
+    @classmethod
+    def _finalize_execution(
+        cls,
+        output_refs,
+        graph,
+        data: dict,
+        reload_each_execution: bool,
+        pad_outputs: int | None = None,
+    ):
         if not reload_each_execution:
             apply_control_after_generate(data)
 
-        while len(output_refs) < MAX_SLOTS:
-            output_refs.append(None)
+        if pad_outputs is not None:
+            while len(output_refs) < pad_outputs:
+                output_refs.append(None)
 
         return io.NodeOutput(*output_refs, expand=graph.finalize())
 
@@ -241,3 +254,109 @@ class SubworkflowFromURL(BaseSubworkflow):
             reload_each_execution=reload_each_execution,
             **kwargs,
         )
+
+
+class SubworkflowModifierSource(BaseSubworkflow):
+    """
+    Exposes a modifier-source slot from an inner workflow as a separate outer node.
+    This breaks the outer dependency cycle by moving the pre-modifier value onto
+    its own node, while the main Subworkflow keeps only the modifier input.
+    """
+
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="SWF_SubworkflowModifierSource",
+            display_name="Subworkflow Modifier Source",
+            category="Subworkflow",
+            description=(
+                "Exposes all modifier source slots from a selected inner workflow. "
+                "Use this together with the main Subworkflow node to break outer "
+                "modifier dependency loops."
+            ),
+            inputs=[
+                io.Combo.Input("workflow", options=list_workflow_files()),
+            ],
+            outputs=_subworkflow_outputs(),
+            enable_expand=True,
+            accept_all_inputs=True,
+        )
+
+    @classmethod
+    def _source_label(cls, workflow: str, **kwargs) -> str:
+        return workflow
+
+    @classmethod
+    def _source_cache_key(cls, workflow: str, **kwargs) -> str:
+        return f"file:{workflow}"
+
+    @classmethod
+    def _load_source(cls, workflow: str, **kwargs) -> dict:
+        if not workflow:
+            raise ValueError("No workflow selected. Choose a workflow file from the dropdown.")
+        try:
+            return load_workflow_file(workflow)
+        except FileNotFoundError:
+            raise ValueError(f"Workflow file not found: {workflow!r}") from None
+
+    @classmethod
+    def execute(cls, workflow: str, **kwargs):
+        reload_each_execution = True
+        data = cls._get_workflow_data(reload_each_execution, workflow=workflow, **kwargs)
+        validate_workflow_nodes_installed(data)
+        output_refs, graph = build_modifier_source_expansion(data, kwargs)
+        return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)
+
+
+class SubworkflowModifierSourceFromURL(BaseSubworkflow):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="SWF_SubworkflowModifierSourceFromURL",
+            display_name="Subworkflow Modifier Source (from URL)",
+            category="Subworkflow",
+            description=(
+                "Exposes all modifier source slots from a workflow loaded from an "
+                "HTTP(S) URL."
+            ),
+            inputs=[
+                io.String.Input("url", multiline=False, default=""),
+                io.Boolean.Input(
+                    "verify_ssl",
+                    display_name="verify SSL",
+                    default=True,
+                    label_on="verify",
+                    label_off="skip",
+                ),
+            ],
+            outputs=_subworkflow_outputs(),
+            enable_expand=True,
+            accept_all_inputs=True,
+        )
+
+    @classmethod
+    def _source_label(cls, url: str, **kwargs) -> str:
+        return url
+
+    @classmethod
+    def _source_cache_key(cls, url: str, verify_ssl: bool = True, **kwargs) -> str:
+        return f"url:{url.strip()}:verify_ssl:{bool(verify_ssl)}"
+
+    @classmethod
+    def _load_source(cls, url: str, verify_ssl: bool = True, **kwargs) -> dict:
+        if not url:
+            raise ValueError("No workflow URL specified.")
+        return load_workflow_url(url.strip(), verify_ssl=bool(verify_ssl))
+
+    @classmethod
+    def execute(cls, url: str, verify_ssl: bool, **kwargs):
+        reload_each_execution = True
+        data = cls._get_workflow_data(
+            reload_each_execution,
+            url=url,
+            verify_ssl=verify_ssl,
+            **kwargs,
+        )
+        validate_workflow_nodes_installed(data)
+        output_refs, graph = build_modifier_source_expansion(data, kwargs)
+        return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)

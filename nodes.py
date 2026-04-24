@@ -1,5 +1,5 @@
 """
-Subworkflow Input and Subworkflow Output: transparent passthrough nodes with MatchType.
+Subworkflow boundary nodes: transparent passthrough nodes with MatchType.
 """
 from comfy_api.latest import io
 
@@ -83,4 +83,40 @@ class SubworkflowOutput(io.ComfyNode):
 
     @classmethod
     def execute(cls, value, slot_name="output"):
+        return io.NodeOutput(value)
+
+
+class SubworkflowModifier(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        tpl = io.MatchType.Template("T")
+        return io.Schema(
+            node_id="SWF_SubworkflowModifier",
+            display_name="Subworkflow Modifier",
+            category="Subworkflow",
+            description=(
+                "Marks a modifier boundary for a reusable workflow. "
+                "Inside a Subworkflow, its output reads the outer slot value and "
+                "its input publishes the modified value back out on the same slot."
+            ),
+            inputs=[
+                io.MatchType.Input("value", template=tpl, optional=True),
+                io.String.Input("slot_name", default="modifier"),
+            ],
+            hidden=[
+                io.Hidden.prompt,
+                io.Hidden.unique_id,
+            ],
+            outputs=[
+                io.MatchType.Output(template=tpl, display_name="value"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, value=None, slot_name="modifier"):
+        if not _has_linked_value_input(cls.hidden.prompt, cls.hidden.unique_id):
+            raise ValueError(
+                "Subworkflow Modifier must have its value input linked when executed directly. "
+                "It is only allowed to be unlinked when used inside a Subworkflow node."
+            )
         return io.NodeOutput(value)

@@ -2,16 +2,7 @@
 
 ComfyUI-Subworkflow adds reusable workflow boundaries to ComfyUI. It lets one workflow expose named inputs and outputs, then lets another workflow execute it through a single `Subworkflow` node.
 
-![Example workflow used as inner workflow in Subworkflow node](./assets/readme_usage.png)
-
-## Subworkflow vs Subgraph
-
-**Note:** *Subworkflows are fundametally different from subgraphs. Subworkflow offers a way to reuse entire workflows as nodes in other workflows, while subgraphs are a way to reuse a group of nodes within the same workflow.*
-
-In the example below you can see several workflows are used, and the image to video workflow is used several times:
-
-![Example workflow with several Subworkflow nodes with loaded inner workflows](./assets/readme_wf1.png)
-*Example workflow with several Subworkflow nodes with loaded inner workflows*
+![Example workflow used as inner workflow in Subworkflow node](./assets/readme_usage2.png)
 
 ## Subworkflow custom nodes
 
@@ -26,6 +17,11 @@ Inputs:
 - `at execution`: controls whether the inner workflow file is reloaded on every execution or a loaded workflow instance is kept.
 
 Outputs are dynamic and are inferred from the inner workflow's `Subworkflow Output` nodes.
+
+In the example below you can see several workflows are used, and the image to video workflow is used several times:
+
+![Example workflow with several Subworkflow nodes with loaded inner workflows](./assets/readme_wf1.png)
+*Example workflow with several Subworkflow nodes with loaded inner workflows*
 
 ### Subworkflow (from URL)
 
@@ -53,8 +49,9 @@ Marks an output boundary inside a reusable workflow. The `slot_name` widget cont
 
 `Subworkflow Output` also behaves as a passthrough when other nodes inside the same inner workflow consume its output.
 
-![Example workflow with input and output nodes](./assets/readme_upscale.png)
-*Example workflow setup with (green) input and output nodes for usage as inner workflow.*
+## Subworkflow vs Subgraph
+
+**Note:** *Subworkflows are fundametally different from subgraphs. Subworkflow offers a way to reuse entire workflows as nodes in other workflows, while subgraphs are a way to reuse a group of nodes within the same workflow.*
 
 ## Features
 
@@ -108,6 +105,13 @@ Use `at execution` set to `reload` when the inner workflow file should be read f
 Use the `Subworkflow (from URL)` node to load an inner workflow from a URL instead of a local file. The URL must point to a raw JSON workflow file. 
 Since the SSL certificate handling of ComfyUI's Python environment may not support all HTTPS endpoints, there is an option to ignore SSL errors when loading from URL. Use this option with caution and only for trusted sources.
 
+## Modifier Nodes ![New](https://img.shields.io/badge/NEW-green)
+
+If you want to expose an output from the inner workflow, modify it (for example, add loras to a model), and then pass it back into the inner workflow, you can use the `Subworkflow Modifier` node in combination with `Subworkflow Modifier Source` nodes. 
+The modifier node takes an input value, passes it through to its output, and also makes it available as a source for modifier sources. The modifier sources can be used in the inner workflow to access the modified value without creating circular reference problems.
+
+![Example workflow used as inner workflow in Subworkflow node](./assets/readme_modifier.png)
+
 ## Use Cases
 
 - Reuse a prompt, sampler, or decode chain across multiple workflows.
@@ -136,6 +140,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 
 ### Version History
 
+- 1.1.0 - Added `Subworkflow Modifier`, `Subworkflow Modifier Source` (+ from URL) nodes. Combining these nodes in inner and outer workflows allows for circular links between an inner workflow input and output, without circular reference problems. 
 - 1.0.1 - UI only nodes are now supported in inner workflows, no longer raising and error when loading.
 - 1.0.0 - Initial release of the four custom nodes and workflow loading and execution behavior.
 

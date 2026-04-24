@@ -7,8 +7,13 @@ log.info("[Subworkflow] module load started")
 
 from comfy_api.latest import ComfyExtension, io
 
-from .nodes import SubworkflowInput, SubworkflowOutput
-from .workflow_node import Subworkflow, SubworkflowFromURL
+from .nodes import SubworkflowInput, SubworkflowOutput, SubworkflowModifier
+from .workflow_node import (
+    Subworkflow,
+    SubworkflowFromURL,
+    SubworkflowModifierSource,
+    SubworkflowModifierSourceFromURL,
+)
 from . import server_routes
 
 WEB_DIRECTORY = "./js"
@@ -19,7 +24,15 @@ log.info("[Subworkflow] debug logging %s", "enabled" if DEBUG_ENABLED else "disa
 
 class SubworkflowExtension(ComfyExtension):
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
-        nodes = [Subworkflow, SubworkflowFromURL, SubworkflowInput, SubworkflowOutput]
+        nodes = [
+            Subworkflow,
+            SubworkflowFromURL,
+            SubworkflowModifierSource,
+            SubworkflowModifierSourceFromURL,
+            SubworkflowInput,
+            SubworkflowOutput,
+            SubworkflowModifier,
+        ]
         log.debug("[Subworkflow] registering V3 nodes: %s",
                   [n.__name__ for n in nodes])
         return nodes

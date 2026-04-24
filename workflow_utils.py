@@ -22,6 +22,7 @@ _UUID_RE = re.compile(
 
 SWF_SUBWORKFLOW_INPUT = "SWF_SubworkflowInput"
 SWF_SUBWORKFLOW_OUTPUT = "SWF_SubworkflowOutput"
+SWF_SUBWORKFLOW_MODIFIER = "SWF_SubworkflowModifier"
 MAX_SLOTS = 8
 PLACEHOLDER = ""
 MAX_URL_WORKFLOW_BYTES = 50 * 1024 * 1024
@@ -163,20 +164,81 @@ def _sort_key(node_id: str):
 
 def get_workflow_io(data: dict) -> tuple[list[dict], list[dict]]:
     """
-    Return (inputs, outputs) sorted by node id.
-    Each entry: {"node_id": str, "slot_name": str}
+    Return the public outer-node inputs/outputs for a workflow.
+    """
+    info = get_workflow_interface(data)
+    log.debug(
+        "[Subworkflow] workflow public I/O discovered inputs=%s outputs=%s modifiers=%s",
+        info["inputs"],
+        info["outputs"],
+        info["modifiers"],
+    )
+    return info["inputs"], info["outputs"]
+
+
+def get_workflow_interface(data: dict) -> dict:
+    """
+    Return the boundary analysis for a workflow.
+
+    Keys:
+      raw_inputs/raw_outputs: every boundary node participating in expansion
+      inputs/outputs: public sockets for the main outer Subworkflow node
+      modifiers: modifier bridges exposed through Subworkflow Modifier Source
     """
     if is_ui_format(data):
-        inputs, outputs = _get_workflow_io_ui(data)
-        log.debug("[Subworkflow] UI workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
-        return inputs, outputs
-    inputs, outputs = _get_workflow_io_api(data)
-    log.debug("[Subworkflow] API workflow I/O discovered inputs=%s outputs=%s", inputs, outputs)
-    return inputs, outputs
+        raw_inputs, raw_outputs, explicit_modifiers = _discover_workflow_io_ui(data)
+    else:
+        raw_inputs, raw_outputs, explicit_modifiers = _discover_workflow_io_api(data)
+    return _analyze_workflow_io(raw_inputs, raw_outputs, explicit_modifiers)
 
 
-def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
-    inputs, outputs = [], []
+def _copy_slot_info(slot: dict) -> dict:
+    return {
+        "node_id": slot["node_id"],
+        "slot_name": slot["slot_name"],
+        "type": slot.get("type") or "*",
+    }
+
+
+def _analyze_workflow_io(
+    raw_inputs: list[dict],
+    raw_outputs: list[dict],
+    explicit_modifiers: list[dict],
+) -> dict:
+    modifiers_by_output_node: dict[str, dict] = {}
+
+    for item in explicit_modifiers:
+        modifiers_by_output_node[item["output_node_id"]] = {
+            "slot_name": item["slot_name"],
+            "type": item.get("type") or "*",
+            "input_node_id": item["input_node_id"],
+            "output_node_id": item["output_node_id"],
+        }
+
+    modifiers = sorted(
+        modifiers_by_output_node.values(),
+        key=lambda item: (_sort_key(item["output_node_id"]), item["slot_name"]),
+    )
+    modifier_output_ids = {item["output_node_id"] for item in modifiers}
+
+    public_inputs = [_copy_slot_info(item) for item in raw_inputs]
+    public_outputs = [
+        _copy_slot_info(item)
+        for item in raw_outputs
+        if item["node_id"] not in modifier_output_ids
+    ]
+
+    return {
+        "raw_inputs": [_copy_slot_info(item) for item in raw_inputs],
+        "raw_outputs": [_copy_slot_info(item) for item in raw_outputs],
+        "inputs": public_inputs,
+        "outputs": public_outputs,
+        "modifiers": modifiers,
+    }
+
+
+def _discover_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict], list[dict]]:
+    inputs, outputs, modifiers = [], [], []
     for node in data.get("nodes", []):
         ntype = _node_class_type(node)
         nid = str(node.get("id"))
@@ -190,6 +252,24 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
                 slot_type,
             )
             inputs.append({"node_id": nid, "slot_name": slot_name, "type": slot_type})
+        elif ntype == SWF_SUBWORKFLOW_MODIFIER:
+            slot_name = _boundary_slot_name(node, nid)
+            slot_type = _boundary_output_type(node) or _boundary_value_input_type(node)
+            log.debug(
+                "[Subworkflow] found UI modifier boundary node=%s slot=%r type=%s",
+                nid,
+                slot_name,
+                slot_type,
+            )
+            modifier_info = {"node_id": nid, "slot_name": slot_name, "type": slot_type}
+            inputs.append(modifier_info)
+            outputs.append(modifier_info)
+            modifiers.append({
+                "slot_name": slot_name,
+                "type": slot_type,
+                "input_node_id": nid,
+                "output_node_id": nid,
+            })
         elif ntype == SWF_SUBWORKFLOW_OUTPUT:
             slot_name = _boundary_slot_name(node, nid)
             slot_type = _boundary_output_type(node) or _boundary_value_input_type(node)
@@ -202,7 +282,8 @@ def _get_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict]]:
             outputs.append({"node_id": nid, "slot_name": slot_name, "type": slot_type})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
-    return inputs, outputs
+    modifiers.sort(key=lambda x: (_sort_key(x["output_node_id"]), x["slot_name"]))
+    return inputs, outputs, modifiers
 
 
 def _boundary_slot_name(node: dict, fallback: str) -> str:
@@ -228,8 +309,8 @@ def _boundary_value_input_type(node: dict) -> str:
     return "*"
 
 
-def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
-    inputs, outputs = [], []
+def _discover_workflow_io_api(data: dict) -> tuple[list[dict], list[dict], list[dict]]:
+    inputs, outputs, modifiers = [], [], []
     for nid, node in data.items():
         if nid.startswith("_"):
             continue
@@ -238,12 +319,24 @@ def _get_workflow_io_api(data: dict) -> tuple[list[dict], list[dict]]:
         if ct == SWF_SUBWORKFLOW_INPUT:
             log.debug("[Subworkflow] found API input boundary node=%s slot=%r type=*", nid, slot)
             inputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
+        elif ct == SWF_SUBWORKFLOW_MODIFIER:
+            log.debug("[Subworkflow] found API modifier boundary node=%s slot=%r type=*", nid, slot)
+            modifier_info = {"node_id": nid, "slot_name": slot, "type": "*"}
+            inputs.append(modifier_info)
+            outputs.append(modifier_info)
+            modifiers.append({
+                "slot_name": slot,
+                "type": "*",
+                "input_node_id": nid,
+                "output_node_id": nid,
+            })
         elif ct == SWF_SUBWORKFLOW_OUTPUT:
             log.debug("[Subworkflow] found API output boundary node=%s slot=%r type=*", nid, slot)
             outputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
     inputs.sort(key=lambda x: _sort_key(x["node_id"]))
     outputs.sort(key=lambda x: _sort_key(x["node_id"]))
-    return inputs, outputs
+    modifiers.sort(key=lambda x: (_sort_key(x["output_node_id"]), x["slot_name"]))
+    return inputs, outputs, modifiers
 
 
 # ---------------------------------------------------------------------------
@@ -740,7 +833,14 @@ def apply_control_after_generate(data: dict) -> int:
 # Subgraph expansion
 # ---------------------------------------------------------------------------
 
-def build_expansion(data: dict, outer_inputs: dict):
+def build_expansion(
+    data: dict,
+    outer_inputs: dict,
+    runtime_inputs_info: list[dict] | None = None,
+    selected_outputs_info: list[dict] | None = None,
+    boundary_inputs_info: list[dict] | None = None,
+    boundary_outputs_info: list[dict] | None = None,
+):
     """
     Build a GraphBuilder subgraph from an inner workflow.
     Accepts both UI format and API format.
@@ -748,9 +848,48 @@ def build_expansion(data: dict, outer_inputs: dict):
     outer_inputs: {"swf_in_0": value, "swf_in_1": value, ...}
     Returns (output_refs, graph).
     """
+    info = get_workflow_interface(data)
+    runtime_inputs_info = runtime_inputs_info or info["inputs"]
+    selected_outputs_info = selected_outputs_info or info["outputs"]
+    boundary_inputs_info = boundary_inputs_info or info["raw_inputs"]
+    boundary_outputs_info = boundary_outputs_info or info["raw_outputs"]
+
     if is_ui_format(data):
-        return _build_expansion_ui(data, outer_inputs)
-    return _build_expansion_api(data, outer_inputs)
+        return _build_expansion_ui(
+            data,
+            outer_inputs,
+            runtime_inputs_info,
+            selected_outputs_info,
+            boundary_inputs_info,
+            boundary_outputs_info,
+        )
+    return _build_expansion_api(
+        data,
+        outer_inputs,
+        runtime_inputs_info,
+        selected_outputs_info,
+        boundary_inputs_info,
+        boundary_outputs_info,
+    )
+
+
+def build_modifier_source_expansion(data: dict, outer_inputs: dict):
+    info = get_workflow_interface(data)
+    if not info["modifiers"]:
+        raise ValueError("No Subworkflow Modifier nodes found in inner workflow.")
+
+    selected_outputs_info = [
+        item for item in info["raw_outputs"]
+        if item["node_id"] in {modifier["output_node_id"] for modifier in info["modifiers"]}
+    ]
+    return build_expansion(
+        data,
+        outer_inputs,
+        runtime_inputs_info=[],
+        selected_outputs_info=selected_outputs_info,
+        boundary_inputs_info=info["raw_inputs"],
+        boundary_outputs_info=info["raw_outputs"],
+    )
 
 
 def _is_graph_link(value) -> bool:
@@ -780,6 +919,14 @@ def _validate_outer_runtime_inputs(inputs_info: list[dict], outer_inputs: dict, 
                 f"but received {type(value).__name__}. Connect a VIDEO output, "
                 "not IMAGE frames."
             )
+
+
+def _hide_expanded_node_display(gb_node):
+    """
+    Prevent UI-emitting inner nodes from attaching previews to the outer
+    Subworkflow wrapper node.
+    """
+    gb_node.set_override_display_id(f"__swf_internal__:{gb_node.id}")
 
 
 def _build_subgraph_defs(data: dict) -> dict:
@@ -947,7 +1094,9 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
             log.warning("[Subworkflow] subgraph node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
-        sg_refs[nid] = graph.node(ct, id=f"{id_prefix}_{nid}")
+        gb_node = graph.node(ct, id=f"{id_prefix}_{nid}")
+        _hide_expanded_node_display(gb_node)
+        sg_refs[nid] = gb_node
 
     def resolve_sg_link(link_id: str):
         src = sg_link_map.get(str(link_id))
@@ -1040,7 +1189,14 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
     return output_refs
 
 
-def _build_expansion_ui(data: dict, outer_inputs: dict):
+def _build_expansion_ui(
+    data: dict,
+    outer_inputs: dict,
+    runtime_inputs_info: list[dict],
+    selected_outputs_info: list[dict],
+    boundary_inputs_info: list[dict],
+    boundary_outputs_info: list[dict],
+):
     nodes_list = data.get("nodes", [])
     links_list = data.get("links", [])
 
@@ -1055,17 +1211,19 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     for _, src, ss, dst, _ in parsed_links:
         dst_to_src.setdefault(dst, (src, ss))
 
-    inputs_info, outputs_info = _get_workflow_io_ui(data)
-    _validate_outer_runtime_inputs(inputs_info, outer_inputs, "UI")
+    _validate_outer_runtime_inputs(runtime_inputs_info, outer_inputs, "UI")
 
-    fi_node_ids  = {inp["node_id"] for inp in inputs_info}
-    fo_node_ids  = {out["node_id"] for out in outputs_info}
+    fi_node_ids  = {inp["node_id"] for inp in boundary_inputs_info}
+    fo_node_ids  = {out["node_id"] for out in boundary_outputs_info}
     func_node_ids = fi_node_ids | fo_node_ids
-    fo_src = {out["node_id"]: dst_to_src.get(out["node_id"]) for out in outputs_info}
+    fo_src = {out["node_id"]: dst_to_src.get(out["node_id"]) for out in boundary_outputs_info}
 
-    fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
+    fi_value = {
+        inp["node_id"]: outer_inputs.get(f"swf_in_{i}")
+        for i, inp in enumerate(runtime_inputs_info)
+    }
     fi_fallback_src: dict[str, tuple[str, int]] = {}
-    for inp in inputs_info:
+    for inp in boundary_inputs_info:
         node = nodes_by_id.get(inp["node_id"]) or {}
         node_inputs = node.get("inputs") or []
         fallback_link = None
@@ -1085,15 +1243,15 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
 
     missing = [
         f"swf_in_{i}:{inp['slot_name']}({inp['node_id']})"
-        for i, inp in enumerate(inputs_info)
+        for i, inp in enumerate(runtime_inputs_info)
         if outer_inputs.get(f"swf_in_{i}") is None and inp["node_id"] not in fi_fallback_src
     ]
     if missing:
         log.warning("[Subworkflow] missing UI inner input value(s) and fallback link(s): %s", missing)
     log.debug(
         "[Subworkflow] building UI expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
-        len(inputs_info),
-        len(outputs_info),
+        len(runtime_inputs_info),
+        len(selected_outputs_info),
         len(nodes_list),
         sorted(k for k in outer_inputs if k.startswith("swf_in_")),
     )
@@ -1102,13 +1260,16 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     node_refs: dict = {}
     subgraph_outputs: dict = {}  # nid → [output_ref, ...]
 
+    def resolve_input_boundary_value(node_id: str):
+        value = fi_value.get(node_id)
+        if value is not None:
+            return value
+        src = fi_fallback_src.get(node_id)
+        return resolve_link(src[0], src[1]) if src else None
+
     def resolve_link(src_node_id: str, src_slot: int):
         if src_node_id in fi_value:
-            value = fi_value[src_node_id]
-            if value is not None:
-                return value
-            src = fi_fallback_src.get(src_node_id)
-            return resolve_link(src[0], src[1]) if src else None
+            return resolve_input_boundary_value(src_node_id)
         if src_node_id in fo_src:
             src = fo_src[src_node_id]
             return resolve_link(src[0], src[1]) if src else None
@@ -1150,7 +1311,9 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
             log.warning("[Subworkflow] node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
-        node_refs[nid] = graph.node(ct, id=nid)
+        gb_node = graph.node(ct, id=nid)
+        _hide_expanded_node_display(gb_node)
+        node_refs[nid] = gb_node
 
     # Subgraph expansion pass (runs after pass 1 so node_refs is populated).
     for node in nodes_list:
@@ -1209,60 +1372,75 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
 
     # Collect output refs from Subworkflow Output nodes.
     output_refs = []
-    for out in outputs_info:
+    for out in selected_outputs_info:
         src = dst_to_src.get(out["node_id"])
-        if src is None:
-            log.warning("[Subworkflow] Subworkflow Output node=%s has no incoming link", out["node_id"])
-        ref = resolve_link(src[0], src[1]) if src else None
+        if src is None and out["node_id"] in fi_node_ids:
+            ref = resolve_input_boundary_value(out["node_id"])
+        else:
+            if src is None:
+                log.warning("[Subworkflow] Subworkflow Output node=%s has no incoming link", out["node_id"])
+            ref = resolve_link(src[0], src[1]) if src else None
         output_refs.append(ref)
 
     return output_refs, graph
 
 
-def _build_expansion_api(data: dict, outer_inputs: dict):
-    inputs_info, outputs_info = _get_workflow_io_api(data)
-    _validate_outer_runtime_inputs(inputs_info, outer_inputs, "API")
+def _build_expansion_api(
+    data: dict,
+    outer_inputs: dict,
+    runtime_inputs_info: list[dict],
+    selected_outputs_info: list[dict],
+    boundary_inputs_info: list[dict],
+    boundary_outputs_info: list[dict],
+):
+    _validate_outer_runtime_inputs(runtime_inputs_info, outer_inputs, "API")
 
-    fi_value = {inp["node_id"]: outer_inputs.get(f"swf_in_{i}") for i, inp in enumerate(inputs_info)}
+    fi_value = {
+        inp["node_id"]: outer_inputs.get(f"swf_in_{i}")
+        for i, inp in enumerate(runtime_inputs_info)
+    }
     fi_fallback_value = {
         inp["node_id"]: data[inp["node_id"]].get("inputs", {}).get("value")
-        for inp in inputs_info
+        for inp in boundary_inputs_info
         if inp["node_id"] in data
     }
     missing = [
         f"swf_in_{i}:{inp['slot_name']}({inp['node_id']})"
-        for i, inp in enumerate(inputs_info)
+        for i, inp in enumerate(runtime_inputs_info)
         if outer_inputs.get(f"swf_in_{i}") is None and fi_fallback_value.get(inp["node_id"]) is None
     ]
     if missing:
         log.warning("[Subworkflow] missing API inner input value(s) and fallback value(s): %s", missing)
     log.debug(
         "[Subworkflow] building API expansion with %d input(s), %d output(s), %d inner node(s), outer_input_keys=%s",
-        len(inputs_info),
-        len(outputs_info),
+        len(runtime_inputs_info),
+        len(selected_outputs_info),
         len([nid for nid in data if not str(nid).startswith("_")]),
         sorted(k for k in outer_inputs if k.startswith("swf_in_")),
     )
-    func_node_ids = {inp["node_id"] for inp in inputs_info} | {out["node_id"] for out in outputs_info}
+    func_node_ids = {inp["node_id"] for inp in boundary_inputs_info} | {out["node_id"] for out in boundary_outputs_info}
     fo_src = {
         out["node_id"]: data[out["node_id"]].get("inputs", {}).get("value")
-        for out in outputs_info
+        for out in boundary_outputs_info
     }
 
     graph = GraphBuilder()
     node_refs: dict = {}
 
+    def resolve_input_boundary_value(node_id: str):
+        value = fi_value.get(node_id)
+        if value is not None:
+            return value
+        fallback = fi_fallback_value.get(node_id)
+        if isinstance(fallback, list) and len(fallback) == 2 and isinstance(fallback[0], (str, int)):
+            return resolve_link(fallback)
+        return fallback
+
     def resolve_link(link_val):
         src_id   = str(link_val[0])
         src_slot = int(link_val[1])
         if src_id in fi_value:
-            value = fi_value[src_id]
-            if value is not None:
-                return value
-            fallback = fi_fallback_value.get(src_id)
-            if isinstance(fallback, list) and len(fallback) == 2 and isinstance(fallback[0], (str, int)):
-                return resolve_link(fallback)
-            return fallback
+            return resolve_input_boundary_value(src_id)
         if src_id in fo_src:
             src = fo_src[src_id]
             return resolve_link(src) if isinstance(src, list) and len(src) == 2 else src
@@ -1277,7 +1455,9 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
         ct = node.get("class_type")
         if ct is None:
             continue
-        node_refs[nid] = graph.node(ct, id=nid)
+        gb_node = graph.node(ct, id=nid)
+        _hide_expanded_node_display(gb_node)
+        node_refs[nid] = gb_node
 
     for nid, node in data.items():
         if nid.startswith("_") or nid in func_node_ids:
@@ -1296,11 +1476,13 @@ def _build_expansion_api(data: dict, outer_inputs: dict):
                 gb_node.set_input(inp_name, inp_val)
 
     output_refs = []
-    for out in outputs_info:
+    for out in selected_outputs_info:
         inp_dict = data[out["node_id"]].get("inputs", {})
         val = inp_dict.get("value")
         if isinstance(val, list) and len(val) == 2 and isinstance(val[0], (str, int)):
             output_refs.append(resolve_link(val))
+        elif out["node_id"] in {inp["node_id"] for inp in boundary_inputs_info}:
+            output_refs.append(resolve_input_boundary_value(out["node_id"]))
         else:
             output_refs.append(val)
 

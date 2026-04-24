@@ -9,7 +9,7 @@ from .debug_utils import configure_logger
 from .workflow_utils import (
     load_workflow_file,
     load_workflow_url,
-    get_workflow_io,
+    get_workflow_interface,
     list_workflow_files,
     is_ui_format,
 )
@@ -54,18 +54,18 @@ def setup_routes():
         if source == "url":
             if not url:
                 log.warning("[Subworkflow] route URL info request missing URL")
-                return web.json_response({"inputs": [], "outputs": [], "error": "No workflow URL specified"})
+                return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": "No workflow URL specified"})
             log.debug("[Subworkflow] route selected URL loader for %r verify_ssl=%s", url, verify_ssl)
             loader = load_workflow_url
         elif source == "file":
             if not workflow_name:
                 log.warning("[Subworkflow] route info request missing workflow name")
-                return web.json_response({"inputs": [], "outputs": [], "error": "No workflow specified"})
+                return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": "No workflow specified"})
             log.debug("[Subworkflow] route selected file loader for %r", workflow_name)
             loader = load_workflow_file
         else:
             log.warning("[Subworkflow] route unsupported source=%r", source)
-            return web.json_response({"inputs": [], "outputs": [], "error": f"Unsupported source: {source}"})
+            return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": f"Unsupported source: {source}"})
 
         try:
             if source == "url":
@@ -87,31 +87,42 @@ def setup_routes():
             )
         except FileNotFoundError:
             log.warning("[Subworkflow] route workflow file not found: %r", source_value)
-            return web.json_response({"inputs": [], "outputs": [], "error": f"File not found: {source_value}"})
+            return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": f"File not found: {source_value}"})
         except json.JSONDecodeError as e:
             log.warning("[Subworkflow] route invalid JSON in workflow %r: %s", source_value, e)
-            return web.json_response({"inputs": [], "outputs": [], "error": f"Invalid JSON: {e}"})
+            return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": f"Invalid JSON: {e}"})
         except UnicodeDecodeError as e:
             log.warning("[Subworkflow] route invalid UTF-8 in workflow %r: %s", source_value, e)
-            return web.json_response({"inputs": [], "outputs": [], "error": f"Invalid UTF-8: {e}"})
+            return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": f"Invalid UTF-8: {e}"})
         except ValueError as e:
             log.warning("[Subworkflow] route failed to load workflow %r: %s", source_value, e)
-            return web.json_response({"inputs": [], "outputs": [], "error": str(e)})
+            return web.json_response({"inputs": [], "outputs": [], "modifiers": [], "error": str(e)})
 
         try:
-            inputs, outputs = get_workflow_io(data)
+            interface = get_workflow_interface(data)
         except Exception as e:
             log.exception("[Subworkflow] route failed to discover I/O for workflow %r", source_value)
-            return web.json_response({"inputs": [], "outputs": [], "error": f"Failed to discover workflow I/O: {e}"})
+            return web.json_response({
+                "inputs": [],
+                "outputs": [],
+                "modifiers": [],
+                "error": f"Failed to discover workflow I/O: {e}",
+            })
         log.debug(
-            "[Subworkflow] route source=%r workflow=%r format=%s inputs=%s outputs=%s",
+            "[Subworkflow] route source=%r workflow=%r format=%s inputs=%s outputs=%s modifiers=%s",
             source,
             source_value,
             "UI" if is_ui_format(data) else "API",
-            inputs,
-            outputs,
+            interface["inputs"],
+            interface["outputs"],
+            interface["modifiers"],
         )
-        return web.json_response({"inputs": inputs, "outputs": outputs, "error": None})
+        return web.json_response({
+            "inputs": interface["inputs"],
+            "outputs": interface["outputs"],
+            "modifiers": interface["modifiers"],
+            "error": None,
+        })
 
     routes.get("/subworkflow/info")(get_workflow_info)
 

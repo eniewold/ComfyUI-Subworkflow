@@ -16,6 +16,7 @@ import { $el, ComfyDialog } from "../../scripts/ui.js";
 
 const NODE_CONFIGS = {
     SWF_Subworkflow: {
+        kind: "main",
         widgetName: "workflow",
         refreshWidgetNames: ["workflow"],
         describe: "workflow",
@@ -24,6 +25,26 @@ const NODE_CONFIGS = {
         },
     },
     SWF_SubworkflowFromURL: {
+        kind: "main",
+        widgetName: "url",
+        refreshWidgetNames: ["url", "verify_ssl"],
+        describe: "workflow URL",
+        infoPath(value, node) {
+            const verifySsl = node?.widgets?.find(w => w.name === "verify_ssl")?.value !== false;
+            return `/subworkflow/info?source=url&url=${encodeURIComponent(value)}&verify_ssl=${verifySsl ? "true" : "false"}`;
+        },
+    },
+    SWF_SubworkflowModifierSource: {
+        kind: "modifier_source",
+        widgetName: "workflow",
+        refreshWidgetNames: ["workflow"],
+        describe: "workflow",
+        infoPath(value) {
+            return `/subworkflow/info?source=file&workflow=${encodeURIComponent(value)}`;
+        },
+    },
+    SWF_SubworkflowModifierSourceFromURL: {
+        kind: "modifier_source",
         widgetName: "url",
         refreshWidgetNames: ["url", "verify_ssl"],
         describe: "workflow URL",
@@ -241,28 +262,43 @@ function updateOutputSlots(node, outputs) {
     debugLog(`updateOutputSlots: ${needCount} slot(s), after`, slotSummary(node.outputs));
 }
 
-function applyWorkflowInfo(node, info) {
+function getModifierSourceInputs(info, selectedModifier) {
+    return [];
+}
+
+function updateModifierSourceOutputs(node, modifiers) {
+    updateOutputSlots(node, modifiers || []);
+}
+
+function applyWorkflowInfo(node, info, config) {
     if (!info) {
         debugWarn("applyWorkflowInfo: no workflow info to apply", { nodeId: node.id });
         return;
     }
+    node.__swfWorkflowInfo = info;
     const { inputs = [], outputs = [] } = info;
     debugLog(`applyWorkflowInfo: ${inputs.length} input(s), ${outputs.length} output(s)`, {
         nodeId: node.id,
         currentInputs: slotSummary(node.inputs),
         currentOutputs: slotSummary(node.outputs),
     });
-    updateInputSlots(node, inputs);
-    updateOutputSlots(node, outputs);
+    if (config?.kind === "modifier_source") {
+        updateInputSlots(node, []);
+        updateModifierSourceOutputs(node, info.modifiers || []);
+    } else {
+        updateInputSlots(node, inputs);
+        updateOutputSlots(node, outputs);
+    }
     setNodeSizeAtLeast(node, node.computeSize());
     app.graph.setDirtyCanvas(true, true);
 }
 
-function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
+function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize, config) {
     if (!info) {
         debugWarn("applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
         return;
     }
+    node.__swfWorkflowInfo = info;
     const { inputs = [], outputs = [] } = info;
     debugLog(`applyWorkflowInfoOnLoad: server=${inputs.length}in/${outputs.length}out, savedInputs=${savedInputCount}`, {
         nodeId: node.id,
@@ -270,7 +306,24 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
         currentOutputs: slotSummary(node.outputs),
     });
 
-    if (savedInputCount === inputs.length) {
+    if (config?.kind === "modifier_source") {
+        const sourceInputs = [];
+        if (savedInputCount === sourceInputs.length) {
+            debugLog("applyWorkflowInfoOnLoad: modifier source input count matches, updating labels only");
+            let idx = 0;
+            for (const inp of (node.inputs || [])) {
+                if (inp.name?.startsWith("swf_in_") && idx < sourceInputs.length) {
+                    inp.label = sourceInputs[idx].slot_name;
+                    inp.type = swfSlotType(sourceInputs[idx]);
+                    idx++;
+                }
+            }
+        } else {
+            debugLog(`applyWorkflowInfoOnLoad: modifier source input count changed (${savedInputCount}->${sourceInputs.length}), full refresh`);
+            updateInputSlots(node, sourceInputs);
+        }
+        updateModifierSourceOutputs(node, info.modifiers || []);
+    } else if (savedInputCount === inputs.length) {
         debugLog("applyWorkflowInfoOnLoad: input count matches, updating labels only");
         let idx = 0;
         for (const inp of (node.inputs || [])) {
@@ -285,7 +338,9 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize) {
         updateInputSlots(node, inputs);
     }
 
-    updateOutputSlots(node, outputs);
+    if (config?.kind !== "modifier_source") {
+        updateOutputSlots(node, outputs);
+    }
 
     if (savedSize) {
         debugLog("applyWorkflowInfoOnLoad: restoring saved node size", savedSize);
@@ -350,7 +405,7 @@ app.registerExtension({
 
             if (sourceValue) {
                 fetchWorkflowInfo(config, sourceValue, this).then(info => {
-                    applyWorkflowInfoOnLoad(this, info, savedInputCount, savedSize);
+                    applyWorkflowInfoOnLoad(this, info, savedInputCount, savedSize, config);
                 });
             } else {
                 clearWorkflowError();
@@ -377,7 +432,7 @@ app.registerExtension({
                     inputs: slotSummary(this.inputs),
                     outputs: slotSummary(this.outputs),
                 });
-                fetchWorkflowInfo(config, sourceValue, this).then(info => applyWorkflowInfo(this, info));
+                fetchWorkflowInfo(config, sourceValue, this).then(info => applyWorkflowInfo(this, info, config));
             }
         };
 
@@ -394,7 +449,7 @@ app.registerExtension({
                 outputs: slotSummary(this.outputs),
             });
             if (val) {
-                fetchWorkflowInfo(config, val, this).then(info => applyWorkflowInfo(this, info));
+                fetchWorkflowInfo(config, val, this).then(info => applyWorkflowInfo(this, info, config));
             } else {
                 clearWorkflowError();
                 debugWarn(`onAdded: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
