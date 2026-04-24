@@ -290,6 +290,105 @@ def _is_bypassed_node(node: dict) -> bool:
     return node.get("mode") == 4
 
 
+def _node_has_linked_inputs(node: dict) -> bool:
+    return any(inp.get("link") is not None for inp in (node.get("inputs") or []))
+
+
+def _output_has_links(output: dict) -> bool:
+    links = output.get("links")
+    if isinstance(links, list):
+        return len(links) > 0
+    return links is not None
+
+
+def _node_has_linked_outputs(node: dict) -> bool:
+    return any(_output_has_links(out) for out in (node.get("outputs") or []))
+
+
+def _is_ui_widget_value_node(node: dict, class_type: str | None, subgraph_defs: dict | None = None) -> bool:
+    """
+    Return True for non-executable UI helper nodes that act as a literal widget source.
+
+    These are safe to fold into values only when they have no backend class, no linked
+    inputs, and exactly one widget-backed output.
+    """
+    if not class_type:
+        return False
+    if subgraph_defs and class_type in subgraph_defs:
+        return False
+
+    import nodes as _comfy_nodes
+
+    if class_type in _comfy_nodes.NODE_CLASS_MAPPINGS:
+        return False
+    if _node_has_linked_inputs(node):
+        return False
+
+    outputs = node.get("outputs") or []
+    widgets_values = node.get("widgets_values")
+    if len(outputs) != 1 or not isinstance(widgets_values, list) or not widgets_values:
+        return False
+
+    widget = outputs[0].get("widget") if isinstance(outputs[0], dict) else None
+    return isinstance(widget, dict) and bool(widget.get("name"))
+
+
+def _is_ui_decoration_node(node: dict, class_type: str | None, subgraph_defs: dict | None = None) -> bool:
+    """
+    Return True for non-executable UI-only nodes that have no runtime participation.
+    """
+    if not class_type:
+        return False
+    if subgraph_defs and class_type in subgraph_defs:
+        return False
+
+    import nodes as _comfy_nodes
+
+    if class_type in _comfy_nodes.NODE_CLASS_MAPPINGS:
+        return False
+    if _is_ui_widget_value_node(node, class_type, subgraph_defs):
+        return False
+
+    return not _node_has_linked_inputs(node) and not _node_has_linked_outputs(node)
+
+
+def _is_ui_virtual_node(node: dict, class_type: str | None, subgraph_defs: dict | None = None) -> bool:
+    return _is_ui_decoration_node(node, class_type, subgraph_defs) or _is_ui_widget_value_node(
+        node,
+        class_type,
+        subgraph_defs,
+    )
+
+
+def _build_widget_value_sources(
+    nodes_list: list[dict],
+    subgraph_defs: dict | None = None,
+) -> dict[str, dict[int, object]]:
+    """
+    Return {node_id: {output_slot: literal_value}} for UI-only nodes whose outputs
+    should be treated as widget literals during expansion.
+    """
+    value_sources: dict[str, dict[int, object]] = {}
+    for node in nodes_list:
+        node_id = str(node.get("id"))
+        class_type = _node_class_type(node)
+        if not _is_ui_widget_value_node(node, class_type, subgraph_defs):
+            continue
+
+        widgets_values = node.get("widgets_values")
+        output_values = {0: widgets_values[0]}
+
+        if output_values:
+            value_sources[node_id] = output_values
+            log.debug(
+                "[Subworkflow] widget value node %s (%s) output mapping=%s",
+                node_id,
+                class_type,
+                output_values,
+            )
+    return value_sources
+
+
 def _build_bypass_sources(nodes_list: list[dict], link_map: dict) -> dict[str, dict[int, tuple[str, int]]]:
     """
     Return {bypassed_node_id: {output_slot: (source_node_id, source_slot)}}.
@@ -723,6 +822,8 @@ def _missing_ui_nodes(nodes_list: list[dict], subgraph_defs: dict) -> list[dict]
                     "title": node.get("title"),
                 })
             continue
+        if _is_ui_virtual_node(node, class_type, subgraph_defs):
+            continue
         if class_type in subgraph_defs or class_type in _comfy_nodes.NODE_CLASS_MAPPINGS:
             continue
         key = (node_id, class_type)
@@ -814,6 +915,7 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
     parsed = [_parse_link(lnk) for lnk in sg_links]
     sg_link_map = {lid: (src, ss) for lid, src, ss, _, _ in parsed}
     sg_bypass_sources = _build_bypass_sources(sg_nodes, sg_link_map)
+    sg_value_sources = _build_widget_value_sources(sg_nodes, subgraph_defs={})
 
     # Build outer_values_by_slot: {subgraph_input_slot_index → resolved value}
     sg_input_name_to_slot = {inp.get("name"): i for i, inp in enumerate(sg_inputs_def)}
@@ -834,9 +936,13 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
         nid = str(node.get("id"))
         if nid in sg_bypass_sources:
             continue
+        if nid in sg_value_sources:
+            continue
         ct  = _node_class_type(node)
         if not ct:
             log.warning("[Subworkflow] subgraph node id=%s has no class_type, skipping", nid)
+            continue
+        if _is_ui_decoration_node(node, ct, subgraph_defs={}):
             continue
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
             log.warning("[Subworkflow] subgraph node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
@@ -860,6 +966,8 @@ def _expand_subgraph(outer_node: dict, sg_def: dict, outer_link_map: dict,
                 log.warning("[Subworkflow] subgraph bypass node %s source %s not in sg_refs", src_id, bypass_src[0])
                 return None
             return ref.out(int(bypass_src[1]))
+        if src_id in sg_value_sources:
+            return sg_value_sources[src_id].get(src_slot)
         if src_id == input_node_id:
             return outer_values_by_slot.get(src_slot)
         ref = sg_refs.get(src_id)
@@ -941,6 +1049,7 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
     parsed_links = [_parse_link(lnk) for lnk in links_list]
     link_map = {lid: (src, ss) for lid, src, ss, _, _ in parsed_links}
     bypass_sources = _build_bypass_sources(nodes_list, link_map)
+    value_sources = _build_widget_value_sources(nodes_list, subgraph_defs)
     nodes_by_id = {str(node.get("id")): node for node in nodes_list}
     dst_to_src: dict[str, tuple[str, int]] = {}
     for _, src, ss, dst, _ in parsed_links:
@@ -1009,6 +1118,8 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
                 log.warning("[Subworkflow] bypass node %s slot %d has no source", src_node_id, src_slot)
                 return None
             return resolve_link(src[0], src[1])
+        if src_node_id in value_sources:
+            return value_sources[src_node_id].get(src_slot)
         if src_node_id in subgraph_outputs:
             refs = subgraph_outputs[src_node_id]
             return refs[src_slot] if src_slot < len(refs) else None
@@ -1026,12 +1137,16 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
             continue
         if nid in bypass_sources:
             continue
+        if nid in value_sources:
+            continue
         ct = _node_class_type(node)
         if not ct:
             log.warning("[Subworkflow] node id=%s has no resolvable class_type, skipping", nid)
             continue
         if ct in subgraph_defs:
             continue  # expanded separately below
+        if _is_ui_decoration_node(node, ct, subgraph_defs):
+            continue
         if ct not in _comfy_nodes.NODE_CLASS_MAPPINGS:
             log.warning("[Subworkflow] node id=%s type=%r not in NODE_CLASS_MAPPINGS, skipping", nid, ct)
             continue
@@ -1043,6 +1158,8 @@ def _build_expansion_ui(data: dict, outer_inputs: dict):
         if nid in func_node_ids:
             continue
         if nid in bypass_sources:
+            continue
+        if nid in value_sources:
             continue
         ct = _node_class_type(node)
         if not ct or ct not in subgraph_defs:

@@ -136,6 +136,7 @@ Since the SSL certificate handling of ComfyUI's Python environment may not suppo
 
 ### Version History
 
+- 1.0.1 - UI only nodes are now supported in inner workflows, no longer raising and error when loading.
 - 1.0.0 - Initial release of the four custom nodes and workflow loading and execution behavior.
 
 ### Wish List
