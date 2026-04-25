@@ -56,7 +56,6 @@ const NODE_CONFIGS = {
         },
     },
 };
-const MAX_SLOTS = 8;
 const LOG = "[SWF]";
 const DEBUG = window.localStorage?.getItem("swf_debug") === "1";
 let workflowErrorDialog = null;
@@ -225,7 +224,7 @@ function updateInputSlots(node, inputs) {
             if (node.inputs[i].name?.startsWith("swf_in_")) node.removeInput(i);
         }
     }
-    inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
+    inputs.forEach((inp, i) => {
         debugLog(`updateInputSlots: adding swf_in_${i}`, inp);
         node.addInput(`swf_in_${i}`, swfSlotType(inp), { label: inp.slot_name });
     });
@@ -233,7 +232,7 @@ function updateInputSlots(node, inputs) {
 }
 
 function updateOutputSlots(node, outputs) {
-    const needCount = Math.min(outputs.length, MAX_SLOTS);
+    const needCount = outputs.length;
     debugLog("updateOutputSlots: before", slotSummary(node.outputs));
 
     for (let i = (node.outputs || []).length - 1; i >= 0; i--) {
@@ -443,7 +442,7 @@ function _syncOverrideWidgets(node, inputs, config, pendingOverrideValues) {
 
     let pendingOffset = 0;
 
-    inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
+    inputs.forEach((inp, i) => {
         if (inp.type !== "INT" && inp.type !== "FLOAT") return;
 
         const defaultVal = (inp.default != null) ? inp.default : (inp.type === "INT" ? 0 : 0.0);

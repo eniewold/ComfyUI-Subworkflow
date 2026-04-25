@@ -178,9 +178,11 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 - [ ] Used paths with macro elements are not formatted currectly when used in inner workflow? (use Video Combine node with %date:yyyy-MM-dd%/WAN/Video)
 - [ ] Green progress borders appear on more than one node when executing a inner workflow as part of a larger workflow. These borders should be limited to the currently executing node(s) outer workflow.
 - [ ] The order if inputs/outputs on the `Subworkflow` node is undetermined (probably based on the order of nodes in the inner workflow JSON). Consider adding an option to control this order.
+- [ ] When a node `Subworkflow Input` is used inside a subgraph, it will not be detected as a boundary node and will not be exposed on the `Subworkflow` node.
 
 ### Version History
 
+- v1.2.1 - Removed the maximum number of inputs and outputs on the `Subworkflow` node (was previously set to 8).
 - v1.2.0 - Added manual value entry for primitive `Subworkflow Input` input nodes on the `Subworkflow` node. Check README features section for details.
 - v1.1.0 - Added `Subworkflow Modifier`, `Subworkflow Modifier Source` (+ from URL) nodes. Combining these nodes in inner and outer workflows allows for circular links between an inner workflow input and output, without circular reference problems. 
 - v1.0.1 - UI only nodes are now supported in inner workflows, no longer raising and error when loading.

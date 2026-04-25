@@ -16,7 +16,6 @@ from .workflow_utils import (
     apply_control_after_generate,
     validate_workflow_nodes_installed,
     get_workflow_interface,
-    MAX_SLOTS,
 )
 
 log = configure_logger("ComfyUI-Subworkflow")
@@ -112,32 +111,17 @@ class BaseSubworkflow(io.ComfyNode):
 
         effective_inputs = _apply_primitive_overrides(data, kwargs)
         output_refs, graph = build_expansion(data, effective_inputs)
-        return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)
+        return cls._finalize_execution(output_refs, graph, data, reload_each_execution)
 
     @classmethod
-    def _finalize_execution(
-        cls,
-        output_refs,
-        graph,
-        data: dict,
-        reload_each_execution: bool,
-        pad_outputs: int | None = None,
-    ):
+    def _finalize_execution(cls, output_refs, graph, data: dict, reload_each_execution: bool):
         if not reload_each_execution:
             apply_control_after_generate(data)
-
-        if pad_outputs is not None:
-            while len(output_refs) < pad_outputs:
-                output_refs.append(None)
-
         return io.NodeOutput(*output_refs, expand=graph.finalize())
 
 
 def _subworkflow_outputs():
-    return [
-        io.AnyType.Output(id=f"out_{i}", display_name=f"out_{i}")
-        for i in range(MAX_SLOTS)
-    ]
+    return []
 
 
 def _reload_input():
@@ -330,7 +314,7 @@ class SubworkflowModifierSource(BaseSubworkflow):
         data = cls._get_workflow_data(reload_each_execution, workflow=workflow, **kwargs)
         validate_workflow_nodes_installed(data)
         output_refs, graph = build_modifier_source_expansion(data, kwargs)
-        return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)
+        return cls._finalize_execution(output_refs, graph, data, reload_each_execution)
 
 
 class SubworkflowModifierSourceFromURL(BaseSubworkflow):
@@ -384,4 +368,4 @@ class SubworkflowModifierSourceFromURL(BaseSubworkflow):
         )
         validate_workflow_nodes_installed(data)
         output_refs, graph = build_modifier_source_expansion(data, kwargs)
-        return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)
+        return cls._finalize_execution(output_refs, graph, data, reload_each_execution)
