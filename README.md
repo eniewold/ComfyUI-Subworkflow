@@ -182,6 +182,7 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 
 ### Version History
 
+- v1.2.2 - Fixed a bug where inner node validation exception were raised due to removal of initial static output slots. 
 - v1.2.1 - Removed the maximum number of inputs and outputs on the `Subworkflow` node (was previously set to 8).
 - v1.2.0 - Added manual value entry for primitive `Subworkflow Input` input nodes on the `Subworkflow` node. Check README features section for details.
 - v1.1.0 - Added `Subworkflow Modifier`, `Subworkflow Modifier Source` (+ from URL) nodes. Combining these nodes in inner and outer workflows allows for circular links between an inner workflow input and output, without circular reference problems. 

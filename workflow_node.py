@@ -21,6 +21,27 @@ from .workflow_utils import (
 log = configure_logger("ComfyUI-Subworkflow")
 
 
+class _UnboundedOutputTypes:
+    """Returns '*' for any slot index so validation never IndexErrors on dynamic outputs."""
+    def __getitem__(self, idx):
+        return "*"
+    def __len__(self):
+        return 0
+    def __iter__(self):
+        return iter(())
+
+
+class _UnboundedFalseSeq:
+    """Infinite False iterator so merge_result_data zips correctly for any output count."""
+    def __getitem__(self, idx):
+        return False
+    def __len__(self):
+        return 0
+    def __iter__(self):
+        while True:
+            yield False
+
+
 def _apply_primitive_overrides(data: dict, kwargs: dict) -> dict:
     """
     For INT/FLOAT inputs where the outer slot is not connected and the override
@@ -369,3 +390,13 @@ class SubworkflowModifierSourceFromURL(BaseSubworkflow):
         validate_workflow_nodes_installed(data)
         output_refs, graph = build_modifier_source_expansion(data, kwargs)
         return cls._finalize_execution(output_refs, graph, data, reload_each_execution)
+
+
+_DYNAMIC_RETURN = _UnboundedOutputTypes()
+for _cls in (Subworkflow, SubworkflowFromURL, SubworkflowModifierSource, SubworkflowModifierSourceFromURL):
+    # Pre-set so GET_SCHEMA() doesn't overwrite with the empty list that outputs=[] produces.
+    # Returning '*' for any slot index lets validation accept connections to any output slot.
+    _cls._RETURN_TYPES = _DYNAMIC_RETURN
+    _cls._RETURN_NAMES = []
+    _cls._OUTPUT_IS_LIST = _UnboundedFalseSeq()
+    _cls._OUTPUT_TOOLTIPS = []
