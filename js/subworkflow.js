@@ -20,6 +20,7 @@ const NODE_CONFIGS = {
         widgetName: "workflow",
         refreshWidgetNames: ["workflow"],
         describe: "workflow",
+        staticWidgetCount: 2, // workflow, reload_each_execution
         infoPath(value) {
             return `/subworkflow/info?source=file&workflow=${encodeURIComponent(value)}`;
         },
@@ -29,6 +30,7 @@ const NODE_CONFIGS = {
         widgetName: "url",
         refreshWidgetNames: ["url", "verify_ssl"],
         describe: "workflow URL",
+        staticWidgetCount: 3, // url, verify_ssl, reload_each_execution
         infoPath(value, node) {
             const verifySsl = node?.widgets?.find(w => w.name === "verify_ssl")?.value !== false;
             return `/subworkflow/info?source=url&url=${encodeURIComponent(value)}&verify_ssl=${verifySsl ? "true" : "false"}`;
@@ -270,6 +272,196 @@ function updateModifierSourceOutputs(node, modifiers) {
     updateOutputSlots(node, modifiers || []);
 }
 
+const _OW_MARGIN = 15;
+const _OW_VAL_W = 80;  // value area width
+// Toggle track width = H * _OW_TOG_RATIO (matches ComfyUI boolean widget style)
+const _OW_TOG_RATIO = 1.5;
+
+/**
+ * Build a single custom widget that shows a toggle checkbox and a number input
+ * in one row.  The widget's .value is { use: bool, val: number } so both pieces
+ * are serialised together as one entry in widgets_values.
+ */
+function _makeOverrideWidget(node, slotIndex, inp, useVal, numVal) {
+    const isInt = inp.type === "INT";
+    const M = _OW_MARGIN;
+    const TOG = _OW_TOG_RATIO;
+    const VAL_W = _OW_VAL_W;
+
+    const widget = {
+        name: `swf_override_${slotIndex}`,
+        type: "swf_override",
+        value: { use: Boolean(useVal), val: numVal },
+        options: {},
+
+        computeSize(width) {
+            return [width, LiteGraph.NODE_WIDGET_HEIGHT ?? 20];
+        },
+
+        draw(ctx, node, width, y, H) {
+            const slot = node.inputs?.find(s => s.name === `swf_in_${slotIndex}`);
+            const linked = slot?.link != null;
+            const useOverride = !linked && Boolean(this.value?.use);
+            const val = this.value?.val ?? 0;
+            const togW = H * TOG;  // total toggle slot width
+
+            ctx.save();
+
+            // Background pill — symmetric margins and outline to match ComfyUI widgets
+            ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
+            ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(M, y, width - 2 * M, H, [H * 0.5]);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.textBaseline = "middle";
+
+            if (linked) {
+                ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR;
+                ctx.textAlign = "left";
+                ctx.fillText(inp.slot_name, M + 8, y + H * 0.5);
+                ctx.textAlign = "right";
+                ctx.fillText("linked", width - M - 8, y + H * 0.5);
+            } else {
+                // Toggle switch (ComfyUI boolean widget style)
+                const togX = M + 6;
+                const knobR = H * 0.3;
+                const trackX = togX + 4;
+                const trackY = y + 4;
+                const trackW = togW - 8;
+                const trackH = H - 8;
+
+                // Track: semi-transparent white background
+                ctx.beginPath();
+                ctx.roundRect(trackX, trackY, trackW, trackH, [trackH * 0.5]);
+                ctx.globalAlpha = 0.25;
+                ctx.fillStyle = "rgba(255,255,255,0.45)";
+                ctx.fill();
+                ctx.globalAlpha = 1;
+
+                // Knob
+                const knobX = useOverride ? togX + H : togX + H * 0.5;
+                ctx.beginPath();
+                ctx.arc(knobX, y + H * 0.5, knobR, 0, Math.PI * 2);
+                ctx.fillStyle = useOverride ? "#89B" : "#888";
+                ctx.fill();
+
+                // Label (slot name, capped so it doesn't overflow into value area)
+                const valAreaX = width - M - VAL_W - 4;
+                const labelX = M + 6 + togW + 5;
+                ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR;
+                ctx.textAlign = "left";
+                ctx.fillText(inp.slot_name, labelX, y + H * 0.5, valAreaX - labelX - 4);
+
+                // Value area
+                if (useOverride) {
+                    ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
+                    ctx.beginPath();
+                    ctx.roundRect(valAreaX, y + 2, VAL_W, H - 4, [H * 0.5 - 2]);
+                    ctx.fill();
+
+                    const displayStr = isInt
+                        ? String(Math.round(val))
+                        : String(parseFloat(val.toPrecision(4)));
+                    ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+                    ctx.textAlign = "right";
+                    ctx.fillText(displayStr, valAreaX + VAL_W - 6, y + H * 0.5, VAL_W - 10);
+                } else {
+                    ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR;
+                    ctx.textAlign = "right";
+                    ctx.fillText("(inner fallback)", width - M - 8, y + H * 0.5);
+                }
+            }
+
+            ctx.restore();
+        },
+
+        mouse(event, pos, node) {
+            const [x] = pos;
+            const slot = node.inputs?.find(s => s.name === `swf_in_${slotIndex}`);
+            if (slot?.link != null) return false;
+
+            const H = LiteGraph.NODE_WIDGET_HEIGHT ?? 20;
+            const togX = M + 6;
+            const togEnd = togX + H * TOG + 4;
+            const valAreaX = node.size[0] - M - VAL_W - 4;
+
+            if (event.type === "mousedown" || event.type === "pointerdown") {
+                if (x >= togX && x < togEnd) {
+                    // Toggle
+                    this.value = { ...this.value, use: !this.value.use };
+                    app.graph.setDirtyCanvas(true, false);
+                    if (node.onWidgetChanged) node.onWidgetChanged(this.name, this.value, null, this);
+                    return true;
+                }
+                if (x >= valAreaX && this.value?.use) {
+                    app.canvas.prompt(inp.slot_name, this.value?.val ?? 0, (v) => {
+                        let num = parseFloat(v);
+                        if (!isNaN(num)) {
+                            if (isInt) num = Math.round(num);
+                            this.value = { ...this.value, val: num };
+                            app.graph.setDirtyCanvas(true, false);
+                            if (node.onWidgetChanged) node.onWidgetChanged(this.name, this.value, null, this);
+                        }
+                    }, event);
+                    return true;
+                }
+            }
+            return false;
+        },
+    };
+
+    node.widgets ??= [];
+    node.widgets.push(widget);
+    return widget;
+}
+
+/**
+ * Synchronise override widgets for all INT/FLOAT input slots.
+ *
+ * Removes stale swf_override_* widgets, then for each primitive-typed slot adds one
+ * combined custom widget (swf_override_i) and links the swf_in_i input slot to it so
+ * the connection dot appears inline at the widget row instead of in a separate inputs
+ * section above the widgets.
+ *
+ * pendingOverrideValues: flat array of saved widget VALUES — one entry per primitive
+ * slot, each being the serialised { use, val } object.  Pass null when no saved state.
+ */
+function _syncOverrideWidgets(node, inputs, config, pendingOverrideValues) {
+    if (config?.kind !== "main") return;
+
+    // Remove stale override widgets.
+    if (node.widgets) {
+        for (let i = node.widgets.length - 1; i >= 0; i--) {
+            if (node.widgets[i].name?.startsWith("swf_override_")) {
+                node.widgets.splice(i, 1);
+            }
+        }
+    }
+
+    let pendingOffset = 0;
+
+    inputs.slice(0, MAX_SLOTS).forEach((inp, i) => {
+        if (inp.type !== "INT" && inp.type !== "FLOAT") return;
+
+        const defaultVal = (inp.default != null) ? inp.default : (inp.type === "INT" ? 0 : 0.0);
+        const savedOverride = pendingOverrideValues?.[pendingOffset];
+        pendingOffset += 1;
+
+        const useVal = savedOverride?.use ?? false;
+        const numVal = savedOverride?.val ?? defaultVal;
+
+        const widget = _makeOverrideWidget(node, i, inp, useVal, numVal);
+
+        // Link the input slot to this widget: LiteGraph then draws the connection dot
+        // at the widget's y-position rather than as a separate slot in the inputs list.
+        const slot = node.inputs?.find(s => s.name === `swf_in_${i}`);
+        if (slot) slot.widget = { name: widget.name };
+    });
+}
+
 function applyWorkflowInfo(node, info, config) {
     if (!info) {
         debugWarn("applyWorkflowInfo: no workflow info to apply", { nodeId: node.id });
@@ -288,12 +480,13 @@ function applyWorkflowInfo(node, info, config) {
     } else {
         updateInputSlots(node, inputs);
         updateOutputSlots(node, outputs);
+        _syncOverrideWidgets(node, inputs, config, null);
     }
     setNodeSizeAtLeast(node, node.computeSize());
     app.graph.setDirtyCanvas(true, true);
 }
 
-function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize, config) {
+function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize, config, pendingOverrideValues) {
     if (!info) {
         debugWarn("applyWorkflowInfoOnLoad: no workflow info to apply", { nodeId: node.id, savedInputCount });
         return;
@@ -333,9 +526,12 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize, config)
                 idx++;
             }
         }
+        // Override widgets are not yet present even on the fast path — add them now.
+        _syncOverrideWidgets(node, inputs, config, pendingOverrideValues);
     } else {
         debugLog(`applyWorkflowInfoOnLoad: input count changed (${savedInputCount}->${inputs.length}), full refresh`);
         updateInputSlots(node, inputs);
+        _syncOverrideWidgets(node, inputs, config, pendingOverrideValues);
     }
 
     if (config?.kind !== "modifier_source") {
@@ -381,6 +577,52 @@ app.registerExtension({
             const savedSize = cloneSize(serializedNode.size);
             debugLog(`onConfigure: serialized node has ${savedInputCount} dynamic input(s)`);
 
+            // Stash override widget values that follow the static widgets in widgets_values.
+            // These are restored after the async workflow-info fetch completes.
+            const staticCount = config.staticWidgetCount ?? 0;
+            const pendingOverrideValues = (serializedNode.widgets_values || []).slice(staticCount);
+            debugLog(`onConfigure: stashed ${pendingOverrideValues.length} pending override value(s)`, {
+                staticCount,
+                pendingOverrideValues,
+            });
+
+            // Prepare INT/FLOAT slots so origOnConfigure sees both the link AND slot.widget
+            // together in the serialized data.  ComfyUI handles that combination correctly
+            // (same as a freshly-saved new workflow).  Without this patch, old workflows
+            // (saved before override widgets existed) arrive with no slot.widget; when we
+            // set it later via _syncOverrideWidgets ComfyUI treats it as a "convert widget
+            // to input" operation and silently drops the existing link.
+            if (config?.kind === "main") {
+                // Remove any stale stubs first.
+                if (this.widgets) {
+                    for (let i = this.widgets.length - 1; i >= 0; i--) {
+                        if (this.widgets[i].name?.startsWith("swf_override_")) {
+                            this.widgets.splice(i, 1);
+                        }
+                    }
+                }
+                let primIdx = 0;
+                for (const sinp of (serializedNode.inputs || [])) {
+                    if (!sinp.name?.startsWith("swf_in_")) continue;
+                    if (sinp.type !== "INT" && sinp.type !== "FLOAT") continue;
+                    const slotIdx = parseInt(sinp.name.slice(7)); // "swf_in_".length === 7
+                    const saved = pendingOverrideValues[primIdx++];
+                    // Create the stub widget so the name exists when origOnConfigure validates it.
+                    _makeOverrideWidget(this, slotIdx,
+                        { type: sinp.type, slot_name: sinp.label || sinp.name, default: null },
+                        saved?.use ?? false,
+                        saved?.val ?? 0,
+                    );
+                    // Patch the serialized input so origOnConfigure sees slot.widget in the JSON.
+                    // New workflows already have this; for old ones we add it here so the
+                    // link+widget pair is restored atomically rather than link-first then widget.
+                    if (!sinp.widget) {
+                        sinp.widget = { name: `swf_override_${slotIdx}` };
+                    }
+                }
+                debugLog(`onConfigure: prepared ${primIdx} override stub(s) before origOnConfigure`);
+            }
+
             if (origOnConfigure) origOnConfigure.call(this, serializedNode);
             debugLog("onConfigure: after original handler", {
                 nodeType: nodeData.name,
@@ -405,12 +647,25 @@ app.registerExtension({
 
             if (sourceValue) {
                 fetchWorkflowInfo(config, sourceValue, this).then(info => {
-                    applyWorkflowInfoOnLoad(this, info, savedInputCount, savedSize, config);
+                    applyWorkflowInfoOnLoad(this, info, savedInputCount, savedSize, config, pendingOverrideValues);
                 });
             } else {
                 clearWorkflowError();
                 debugWarn(`onConfigure: ${config.widgetName} widget not found or empty`, { nodeId: this.id });
             }
+        };
+
+        const origOnConnectionsChange = nodeType.prototype.onConnectionsChange;
+        nodeType.prototype.onConnectionsChange = function (type, slotIndex, connected, linkInfo) {
+            if (origOnConnectionsChange) origOnConnectionsChange.call(this, type, slotIndex, connected, linkInfo);
+            if (config?.kind !== "main") return;
+            if (type !== LiteGraph.INPUT) return;
+
+            const inp = (this.inputs || [])[slotIndex];
+            if (!inp?.name?.startsWith("swf_in_")) return;
+
+            // The custom widget's draw() checks the link state itself — just redraw.
+            app.graph.setDirtyCanvas(true, false);
         };
 
         const origOnWidgetChanged = nodeType.prototype.onWidgetChanged;

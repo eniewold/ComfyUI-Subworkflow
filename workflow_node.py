@@ -15,10 +15,34 @@ from .workflow_utils import (
     build_modifier_source_expansion,
     apply_control_after_generate,
     validate_workflow_nodes_installed,
+    get_workflow_interface,
     MAX_SLOTS,
 )
 
 log = configure_logger("ComfyUI-Subworkflow")
+
+
+def _apply_primitive_overrides(data: dict, kwargs: dict) -> dict:
+    """
+    For INT/FLOAT inputs where the outer slot is not connected and the override
+    widget has its switch enabled, substitute the widget value so build_expansion
+    uses it instead of the inner fallback node.
+
+    The frontend sends a single widget named swf_override_i whose value is a dict
+    {"use": bool, "val": number}.
+    """
+    info = get_workflow_interface(data)
+    effective = dict(kwargs)
+    for i, inp_info in enumerate(info["inputs"]):
+        if inp_info.get("type") not in ("INT", "FLOAT"):
+            continue
+        key = f"swf_in_{i}"
+        if effective.get(key) is not None:
+            continue  # connected node takes priority
+        override = effective.get(f"swf_override_{i}")
+        if isinstance(override, dict) and override.get("use"):
+            effective[key] = override.get("val")
+    return effective
 
 
 class BaseSubworkflow(io.ComfyNode):
@@ -86,7 +110,8 @@ class BaseSubworkflow(io.ComfyNode):
         data = cls._get_workflow_data(reload_each_execution, **kwargs)
         validate_workflow_nodes_installed(data)
 
-        output_refs, graph = build_expansion(data, kwargs)
+        effective_inputs = _apply_primitive_overrides(data, kwargs)
+        output_refs, graph = build_expansion(data, effective_inputs)
         return cls._finalize_execution(output_refs, graph, data, reload_each_execution, pad_outputs=MAX_SLOTS)
 
     @classmethod

@@ -193,11 +193,14 @@ def get_workflow_interface(data: dict) -> dict:
 
 
 def _copy_slot_info(slot: dict) -> dict:
-    return {
+    result = {
         "node_id": slot["node_id"],
         "slot_name": slot["slot_name"],
         "type": slot.get("type") or "*",
     }
+    if "default" in slot:
+        result["default"] = slot["default"]
+    return result
 
 
 def _analyze_workflow_io(
@@ -237,21 +240,74 @@ def _analyze_workflow_io(
     }
 
 
+def _extract_ui_input_default(
+    node_id: str,
+    nodes_by_id: dict,
+    link_map: dict,
+    value_sources: dict,
+    slot_type: str,
+):
+    """
+    Try to extract a literal default value for a SubworkflowInput node from its
+    fallback connection when that connection resolves to a UI widget-value node.
+    Returns None if no literal default can be determined.
+    """
+    node = nodes_by_id.get(str(node_id))
+    if not node:
+        return None
+    value_link = None
+    for inp in node.get("inputs") or []:
+        if inp.get("name") == "value" and inp.get("link") is not None:
+            value_link = inp["link"]
+            break
+    if value_link is None:
+        return None
+    src = link_map.get(str(value_link))
+    if src is None:
+        return None
+    src_node_id, src_slot = str(src[0]), int(src[1])
+    if src_node_id not in value_sources:
+        return None
+    raw = value_sources[src_node_id].get(src_slot)
+    if raw is None:
+        return None
+    if slot_type == "INT":
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+    if slot_type == "FLOAT":
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _discover_workflow_io_ui(data: dict) -> tuple[list[dict], list[dict], list[dict]]:
+    nodes_list = data.get("nodes", [])
+    subgraph_defs = _build_subgraph_defs(data)
+    parsed_links = [_parse_link(lnk) for lnk in data.get("links", [])]
+    link_map = {lid: (src, ss) for lid, src, ss, _, _ in parsed_links}
+    value_sources = _build_widget_value_sources(nodes_list, subgraph_defs)
+    nodes_by_id = {str(node.get("id")): node for node in nodes_list}
+
     inputs, outputs, modifiers = [], [], []
-    for node in data.get("nodes", []):
+    for node in nodes_list:
         ntype = _node_class_type(node)
         nid = str(node.get("id"))
         if ntype == SWF_SUBWORKFLOW_INPUT:
             slot_name = _boundary_slot_name(node, nid)
             slot_type = _boundary_output_type(node)
+            default = _extract_ui_input_default(nid, nodes_by_id, link_map, value_sources, slot_type)
             log.debug(
-                "[Subworkflow] found UI input boundary node=%s slot=%r type=%s",
+                "[Subworkflow] found UI input boundary node=%s slot=%r type=%s default=%r",
                 nid,
                 slot_name,
                 slot_type,
+                default,
             )
-            inputs.append({"node_id": nid, "slot_name": slot_name, "type": slot_type})
+            inputs.append({"node_id": nid, "slot_name": slot_name, "type": slot_type, "default": default})
         elif ntype == SWF_SUBWORKFLOW_MODIFIER:
             slot_name = _boundary_slot_name(node, nid)
             slot_type = _boundary_output_type(node) or _boundary_value_input_type(node)
@@ -317,8 +373,17 @@ def _discover_workflow_io_api(data: dict) -> tuple[list[dict], list[dict], list[
         ct = node.get("class_type", "")
         slot = node.get("inputs", {}).get("slot_name", nid)
         if ct == SWF_SUBWORKFLOW_INPUT:
-            log.debug("[Subworkflow] found API input boundary node=%s slot=%r type=*", nid, slot)
-            inputs.append({"node_id": nid, "slot_name": slot, "type": "*"})
+            value_input = node.get("inputs", {}).get("value")
+            # Only treat as a literal default when it is not a graph link reference.
+            default = None
+            if not (
+                isinstance(value_input, list)
+                and len(value_input) == 2
+                and isinstance(value_input[0], (str, int))
+            ):
+                default = value_input
+            log.debug("[Subworkflow] found API input boundary node=%s slot=%r type=* default=%r", nid, slot, default)
+            inputs.append({"node_id": nid, "slot_name": slot, "type": "*", "default": default})
         elif ct == SWF_SUBWORKFLOW_MODIFIER:
             log.debug("[Subworkflow] found API modifier boundary node=%s slot=%r type=*", nid, slot)
             modifier_info = {"node_id": nid, "slot_name": slot, "type": "*"}
