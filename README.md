@@ -118,9 +118,9 @@ The modifier node takes an input value, passes it through to its output, and als
 
 ![Example workflow using Modifier Nodes](./assets/readme_modifier.png)
 
-## Manual Value Entry ![New](https://img.shields.io/badge/NEW-green)
+## User Value Entry ![New](https://img.shields.io/badge/NEW-green)
 
-For `Subworkflow Input` nodes with primitive number types, you can now set their value directly in the `Subworkflow` node without needing to link a separate primitive number node. 
+For `Subworkflow Input` nodes with primitive number types, users can now set the value directly in the `Subworkflow` node without a link to separate node. 
 This allows for more compact workflows when you simply want to set a number for the inner workflow.
 When an node is linked to the input of such a node, the linked node value will take precedence over the set value.
 The value input can also be disabled; the linked input of the inner input will use as fallback value. 
@@ -182,9 +182,10 @@ ComfyUI workflow JSON appears in a few different shapes depending on how it was 
 
 ### Version History
 
+- v1.2.3 - (re)loading an inner workflow with links updates no longer disconnects all input links; they are now preserved when possible.
 - v1.2.2 - Fixed a bug where inner node validation exception were raised due to removal of initial static output slots. 
 - v1.2.1 - Removed the maximum number of inputs and outputs on the `Subworkflow` node (was previously set to 8).
-- v1.2.0 - Added manual value entry for primitive `Subworkflow Input` input nodes on the `Subworkflow` node. Check README features section for details.
+- v1.2.0 - Added value entry for primitive `Subworkflow Input` input nodes directly on the `Subworkflow` node. Check README features section for details.
 - v1.1.0 - Added `Subworkflow Modifier`, `Subworkflow Modifier Source` (+ from URL) nodes. Combining these nodes in inner and outer workflows allows for circular links between an inner workflow input and output, without circular reference problems. 
 - v1.0.1 - UI only nodes are now supported in inner workflows, no longer raising and error when loading.
 - v1.0.0 - Initial release of the four custom nodes and workflow loading and execution behavior.

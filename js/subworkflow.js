@@ -528,8 +528,29 @@ function applyWorkflowInfoOnLoad(node, info, savedInputCount, savedSize, config,
         // Override widgets are not yet present even on the fast path — add them now.
         _syncOverrideWidgets(node, inputs, config, pendingOverrideValues);
     } else {
-        debugLog(`applyWorkflowInfoOnLoad: input count changed (${savedInputCount}->${inputs.length}), full refresh`);
-        updateInputSlots(node, inputs);
+        debugLog(`applyWorkflowInfoOnLoad: input count changed (${savedInputCount}->${inputs.length}), smart update`);
+        // Update existing slots in-place to preserve links, then add/remove only what changed.
+        let idx = 0;
+        for (const inp of (node.inputs || [])) {
+            if (inp.name?.startsWith("swf_in_") && idx < inputs.length) {
+                inp.label = inputs[idx].slot_name;
+                inp.type = swfSlotType(inputs[idx]);
+                idx++;
+            }
+        }
+        if (inputs.length > savedInputCount) {
+            for (let i = savedInputCount; i < inputs.length; i++) {
+                node.addInput(`swf_in_${i}`, swfSlotType(inputs[i]), { label: inputs[i].slot_name });
+            }
+        } else {
+            if (node.inputs) {
+                for (let i = node.inputs.length - 1; i >= 0; i--) {
+                    const nm = node.inputs[i].name;
+                    if (!nm?.startsWith("swf_in_")) continue;
+                    if (parseInt(nm.slice(7)) >= inputs.length) node.removeInput(i);
+                }
+            }
+        }
         _syncOverrideWidgets(node, inputs, config, pendingOverrideValues);
     }
 
